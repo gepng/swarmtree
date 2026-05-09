@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "ens": null,
+  "title": "Steve",
+  "description": "Builder. Crafter. Miner. Welcome to my profile!",
+  "links": [
+    { "label": "Twitter", "url": "https://twitter.com/yourhandle" },
+    { "label": "GitHub", "url": "https://github.com/yourhandle" },
+    { "label": "Website", "url": "https://yourdomain.com" }
+  ],
+  "updatedAt": "2026-05-09T00:00:00Z"
+}

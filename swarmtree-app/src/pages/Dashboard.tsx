@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react"
 import type { FormEvent } from "react"
 import { ConnectButton } from "@rainbow-me/rainbowkit"
-import { useAccount, useEnsAddress, useEnsName } from "wagmi"
+import { useAccount, useEnsName, useReadContract } from "wagmi"
 import { mainnet } from "wagmi/chains"
+import { namehash } from "viem"
 import { Check, Loader2, Plus, Trash2, X } from "lucide-react"
 
+import { ensRegistryAbi } from "@/abi/ensRegistry"
+import { nameWrapperAbi } from "@/abi/nameWrapper"
+import { ENS_REGISTRY, NAME_WRAPPER, ZERO_ADDRESS } from "@/lib/addresses"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -47,25 +51,63 @@ export default function Dashboard() {
     if (primaryEns) setEnsInput((prev) => prev || primaryEns)
   }, [primaryEns])
 
-  // Forward ENS resolution — fires only after the user clicks Verify.
+  // Verify by reading the ENS Registry's manager (the address allowed to write
+  // contenthash). Falls through to the NameWrapper for wrapped names.
+  const node = pendingVerify ? namehash(pendingVerify) : undefined
+
   const {
-    data: resolvedAddress,
-    isFetching: isVerifying,
-    error: verifyError,
-  } = useEnsAddress({
-    name: pendingVerify ?? undefined,
+    data: registryOwner,
+    isFetching: registryFetching,
+    error: registryError,
+  } = useReadContract({
+    address: ENS_REGISTRY,
+    abi: ensRegistryAbi,
+    functionName: "owner",
+    args: node ? [node] : undefined,
     chainId: mainnet.id,
-    query: { enabled: !!pendingVerify },
+    query: { enabled: !!node },
   })
+
+  const isWrapped =
+    !!registryOwner &&
+    registryOwner.toLowerCase() === NAME_WRAPPER.toLowerCase()
+
+  const {
+    data: wrappedOwner,
+    isFetching: wrappedFetching,
+    error: wrappedError,
+  } = useReadContract({
+    address: NAME_WRAPPER,
+    abi: nameWrapperAbi,
+    functionName: "ownerOf",
+    args: node ? [BigInt(node)] : undefined,
+    chainId: mainnet.id,
+    query: { enabled: !!node && isWrapped },
+  })
+
+  const isVerifying =
+    !!pendingVerify && (registryFetching || (isWrapped && wrappedFetching))
+  const verifyError = registryError ?? wrappedError
+  const controller = isWrapped ? wrappedOwner : registryOwner
 
   useEffect(() => {
     if (!pendingVerify || isVerifying) return
+    if (isWrapped && wrappedOwner === undefined && !wrappedError) return
     const matches =
-      resolvedAddress &&
-      address &&
-      resolvedAddress.toLowerCase() === address.toLowerCase()
+      !!controller &&
+      controller.toLowerCase() !== ZERO_ADDRESS &&
+      !!address &&
+      controller.toLowerCase() === address.toLowerCase()
     setVerifiedEns(matches ? pendingVerify : null)
-  }, [pendingVerify, isVerifying, resolvedAddress, address])
+  }, [
+    pendingVerify,
+    isVerifying,
+    isWrapped,
+    wrappedOwner,
+    wrappedError,
+    controller,
+    address,
+  ])
 
   function handleVerify() {
     const name = ensInput.trim().toLowerCase()
@@ -136,10 +178,9 @@ export default function Dashboard() {
         <form onSubmit={handleSave} className="flex flex-col gap-6">
           <Card>
             <CardHeader>
-              <CardTitle>Attach ENS handle</CardTitle>
+              <CardTitle>ENS handle to attach</CardTitle>
               <CardDescription>
-                Verified by resolving the name on Ethereum mainnet to your
-                connected wallet's address record.
+                Verify ownership of an ENS name that resolves to your connected wallet.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
@@ -169,12 +210,12 @@ export default function Dashboard() {
                 <div className="mt-1 flex flex-col gap-1">
                   <p className="text-sm text-green-600 dark:text-green-500 flex items-center gap-1.5">
                     <Check className="size-4" />
-                    Verified — {verifiedEns} resolves to your wallet
+                    Verified — your wallet controls {verifiedEns}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     Your profile will live at{" "}
                     <code className="bg-muted px-1 py-0.5 rounded">
-                      {verifiedEns}.eth.limo
+                      {verifiedEns}.limo
                     </code>
                   </p>
                 </div>
@@ -184,7 +225,7 @@ export default function Dashboard() {
                   <X className="size-4" />
                   {verifyError
                     ? "Lookup failed — check the name or try again"
-                    : `${pendingVerify} doesn't resolve to your connected wallet`}
+                    : `Your wallet doesn't control ${pendingVerify}`}
                 </p>
               )}
             </CardContent>
