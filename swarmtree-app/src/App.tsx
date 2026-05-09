@@ -1,13 +1,13 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom"
 import type { ReactNode } from "react"
+import { useAccount } from "wagmi"
 
 import Dashboard from "@/pages/Dashboard"
 import Login from "@/pages/Login"
-import { useAuth } from "@/hooks/useAuth"
 
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { connected } = useAuth()
-  if (!connected) return <Navigate to="/" replace />
+  const { isConnected } = useAccount()
+  if (!isConnected) return <Navigate to="/" replace />
   return <>{children}</>
 }
 

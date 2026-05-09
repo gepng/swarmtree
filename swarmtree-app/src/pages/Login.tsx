@@ -1,7 +1,8 @@
+import { useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { Wallet } from "lucide-react"
+import { useAccount } from "wagmi"
+import { ConnectButton } from "@rainbow-me/rainbowkit"
 
-import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -9,16 +10,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { useAuth } from "@/hooks/useAuth"
 
 export default function Login() {
   const navigate = useNavigate()
-  const { connect } = useAuth()
+  const { isConnected } = useAccount()
 
-  function handleConnect() {
-    connect()
-    navigate("/dashboard")
-  }
+  useEffect(() => {
+    if (isConnected) navigate("/dashboard")
+  }, [isConnected, navigate])
 
   return (
     <main className="min-h-svh flex items-center justify-center px-4 bg-background">
@@ -29,14 +28,11 @@ export default function Login() {
             Your links page, hash-addressed and wallet-owned.
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <Button onClick={handleConnect} className="w-full" size="lg">
-            <Wallet />
-            Connect Wallet
-          </Button>
+        <CardContent className="flex flex-col items-center gap-4">
+          <ConnectButton showBalance={false} />
           <p className="text-xs text-muted-foreground text-center">
-            v1 placeholder — wagmi wiring lands once a WalletConnect project id
-            is configured. For now this just enters the dashboard.
+            Connect a wallet to manage your profile. We never write to chain in
+            v1 — your address is just your identity.
           </p>
         </CardContent>
       </Card>

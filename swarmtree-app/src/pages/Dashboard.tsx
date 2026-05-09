@@ -1,7 +1,7 @@
 import { useState } from "react"
 import type { FormEvent } from "react"
-import { useNavigate } from "react-router-dom"
-import { LogOut, Plus, Trash2 } from "lucide-react"
+import { ConnectButton } from "@rainbow-me/rainbowkit"
+import { Plus, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -13,7 +13,6 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { useAuth } from "@/hooks/useAuth"
 
 interface LinkItem {
   id: string
@@ -28,8 +27,6 @@ const newLink = (): LinkItem => ({
 })
 
 export default function Dashboard() {
-  const navigate = useNavigate()
-  const { disconnect } = useAuth()
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
   const [links, setLinks] = useState<LinkItem[]>([newLink()])
@@ -50,11 +47,6 @@ export default function Dashboard() {
     setLinks((prev) => [...prev, newLink()])
   }
 
-  function handleLogout() {
-    disconnect()
-    navigate("/")
-  }
-
   function handleSave(e: FormEvent) {
     e.preventDefault()
     const profile = {
@@ -71,10 +63,7 @@ export default function Dashboard() {
       <header className="border-b">
         <div className="mx-auto max-w-3xl flex items-center justify-between px-4 py-3">
           <span className="font-semibold">Swarmtree</span>
-          <Button variant="ghost" size="sm" onClick={handleLogout}>
-            <LogOut />
-            Disconnect
-          </Button>
+          <ConnectButton showBalance={false} chainStatus="icon" />
         </div>
       </header>
 
