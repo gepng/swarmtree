@@ -1,12 +1,7 @@
 import { useEffect, useState } from "react"
 import type { FormEvent } from "react"
 import { ConnectButton } from "@rainbow-me/rainbowkit"
-import {
-  useAccount,
-  useEnsName,
-  useReadContract,
-  useSignMessage,
-} from "wagmi"
+import { useAccount, useEnsName, useReadContract } from "wagmi"
 import { mainnet } from "wagmi/chains"
 import { namehash } from "viem"
 import {
@@ -49,14 +44,13 @@ type UploadStatus =
   | { kind: "success"; reference: string; bzzUrl: string }
   | { kind: "error"; message: string }
 
-// Default = Vite dev-server proxy path (see vite.config.ts).
-// In dev this hits localhost:3000/api/swarm/bzz which Vite forwards to
-// https://beeport.ethswarm.org/bzz server-to-server, bypassing CORS.
-// For production deployments, point this at your own proxy origin.
-const BEEPORT_BACKEND_URL =
-  import.meta.env.VITE_BEEPORT_BACKEND_URL || "/api/swarm"
-const BEE_GATEWAY_URL =
-  import.meta.env.VITE_BEE_GATEWAY_URL || "https://api.gateway.ethswarm.org"
+// api.gateway.ethswarm.org accepts uploads with wildcard CORS and any batch ID.
+const SWARM_UPLOAD_URL =
+  import.meta.env.VITE_SWARM_UPLOAD_URL || "https://api.gateway.ethswarm.org"
+// download.gateway.ethswarm.org serves HTML (api.gateway redirects HTML to a
+// "forbidden" page for phishing protection).
+const SWARM_READ_URL =
+  import.meta.env.VITE_SWARM_READ_URL || "https://download.gateway.ethswarm.org"
 
 interface LinkItem {
   id: string
@@ -180,7 +174,6 @@ export default function Dashboard() {
   }
 
   const { batchId, setBatchId } = useStamp()
-  const { signMessageAsync } = useSignMessage()
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>({
     kind: "idle",
   })
@@ -206,24 +199,14 @@ export default function Dashboard() {
 
   async function handleUpload() {
     if (!address || !batchId) return
-    setUploadStatus({ kind: "signing" })
+    setUploadStatus({ kind: "uploading" })
     try {
       const html = generateProfileHtml(buildProfile())
-      // The wallet popup happens inside uploadProfileFolder via signMessageAsync.
-      // Once signed, the network upload starts — flip the status when the
-      // signature resolves so the spinner label is accurate.
-      const signWithStatus = async (args: { message: string }) => {
-        const sig = await signMessageAsync(args)
-        setUploadStatus({ kind: "uploading" })
-        return sig
-      }
       const result = await uploadProfileFolder({
         html,
         batchId,
-        address,
-        backendUrl: BEEPORT_BACKEND_URL,
-        gatewayUrl: BEE_GATEWAY_URL,
-        signMessageAsync: signWithStatus,
+        uploadUrl: SWARM_UPLOAD_URL,
+        readUrl: SWARM_READ_URL,
       })
       setUploadStatus({
         kind: "success",
@@ -248,8 +231,7 @@ export default function Dashboard() {
     }
   }
 
-  const isUploading =
-    uploadStatus.kind === "signing" || uploadStatus.kind === "uploading"
+  const isUploading = uploadStatus.kind === "uploading"
   const canUpload = !!batchId && !!address && !isUploading
 
   const showVerified = verifiedEns && pendingVerify === verifiedEns
@@ -558,11 +540,9 @@ export default function Dashboard() {
               ) : (
                 <Upload />
               )}
-              {uploadStatus.kind === "signing"
-                ? "Sign in wallet…"
-                : uploadStatus.kind === "uploading"
-                  ? "Uploading…"
-                  : "Save & upload"}
+              {uploadStatus.kind === "uploading"
+                ? "Uploading…"
+                : "Save & upload"}
             </Button>
           </div>
         </form>

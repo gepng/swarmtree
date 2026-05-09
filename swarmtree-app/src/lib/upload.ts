@@ -1,5 +1,3 @@
-import type { Hex } from "viem"
-
 export interface UploadResult {
   reference: string
   bzzUrl: string
@@ -8,10 +6,8 @@ export interface UploadResult {
 export interface UploadParams {
   html: string
   batchId: string
-  address: string
-  backendUrl: string
-  gatewayUrl: string
-  signMessageAsync: (args: { message: string }) => Promise<Hex>
+  uploadUrl: string
+  readUrl: string
 }
 
 const HEX_64 = /^[0-9a-fA-F]{64}$/
@@ -26,35 +22,31 @@ function normalizeBatchId(input: string): string {
   return stripped
 }
 
-// Posts a single index.html as a Swarm collection through Beeport's open-source
-// proxy (default https://swarming.site). The user's wallet signs `index.html:<batchId>`
-// to prove they paid for the batch on the registry contract on Gnosis Chain.
+// Posts a single index.html as a Swarm collection directly to the public Swarm
+// gateway. The gateway's underlying Bee node accepts uploads against any batch
+// ID it has seen — no wallet signature or proxy required (CORS is wildcarded).
+// Reads of the resulting HTML happen via download.gateway.ethswarm.org because
+// api.gateway redirects HTML uploads to a "forbidden" page (phishing protection).
 export async function uploadProfileFolder(
   p: UploadParams
 ): Promise<UploadResult> {
   const batchId = normalizeBatchId(p.batchId)
-  const fileName = "index.html"
-  const messageContent = `${fileName}:${batchId}`
-
-  const signature = await p.signMessageAsync({ message: messageContent })
 
   const formData = new FormData()
   formData.append(
     "file",
     new Blob([p.html], { type: "text/html" }),
-    fileName
+    "index.html"
   )
 
-  const res = await fetch(`${p.backendUrl.replace(/\/$/, "")}/bzz`, {
+  const res = await fetch(`${p.uploadUrl.replace(/\/$/, "")}/bzz`, {
     method: "POST",
     headers: {
       "swarm-postage-batch-id": batchId,
       "swarm-collection": "true",
       "swarm-index-document": "index.html",
-      "x-uploader-address": p.address,
-      "x-upload-signed-message": signature,
-      "x-message-content": messageContent,
-      "x-file-name": fileName,
+      // Wait for chunks to propagate so the hash is immediately resolvable.
+      "swarm-deferred-upload": "false",
     },
     body: formData,
   })
@@ -71,9 +63,9 @@ export async function uploadProfileFolder(
     throw new Error("Upload succeeded but response had no reference field")
   }
 
-  const gateway = p.gatewayUrl.replace(/\/$/, "")
+  const readBase = p.readUrl.replace(/\/$/, "")
   return {
     reference: data.reference,
-    bzzUrl: `${gateway}/bzz/${data.reference}/`,
+    bzzUrl: `${readBase}/bzz/${data.reference}/`,
   }
 }

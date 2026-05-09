@@ -18,7 +18,11 @@ export function lookupProfileHash(address: string): string | null {
 }
 
 export function getGateway(): string {
+  // Reads use download.gateway.ethswarm.org because api.gateway.ethswarm.org
+  // redirects HTML pages to a "forbidden" page (phishing protection); download
+  // serves them as-is.
   return (
-    import.meta.env.VITE_BEE_GATEWAY_URL || "https://api.gateway.ethswarm.org"
+    import.meta.env.VITE_SWARM_READ_URL ||
+    "https://download.gateway.ethswarm.org"
   )
 }
