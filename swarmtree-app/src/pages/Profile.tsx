@@ -3,20 +3,17 @@ import { Link, useParams } from "react-router-dom"
 import { useEnsAddress } from "wagmi"
 import { mainnet } from "wagmi/chains"
 import { ConnectButton } from "@rainbow-me/rainbowkit"
-import { ExternalLink, Loader2 } from "lucide-react"
+import { Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { lookupProfileHash } from "@/lib/directory"
-import { bzzUrl, loadProfile } from "@/lib/swarm"
-import type { Profile as ProfileData } from "@/lib/profile"
+import { bzzUrl } from "@/lib/swarm"
 
 type Status =
   | { kind: "resolving" }
-  | { kind: "loading"; hash: string }
-  | { kind: "loaded"; profile: ProfileData; hash: string }
+  | { kind: "redirecting"; url: string }
   | { kind: "not-found"; reason: string }
-  | { kind: "error"; message: string }
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/
 
@@ -35,7 +32,6 @@ export default function Profile() {
 
   useEffect(() => {
     if (!identifier) return
-
     if (ensName && isResolvingEns) {
       setStatus({ kind: "resolving" })
       return
@@ -59,22 +55,9 @@ export default function Profile() {
       return
     }
 
-    setStatus({ kind: "loading", hash })
-    let cancelled = false
-    loadProfile(hash)
-      .then((profile) => {
-        if (!cancelled) setStatus({ kind: "loaded", profile, hash })
-      })
-      .catch((err: unknown) => {
-        if (!cancelled)
-          setStatus({
-            kind: "error",
-            message: err instanceof Error ? err.message : String(err),
-          })
-      })
-    return () => {
-      cancelled = true
-    }
+    const url = bzzUrl(hash) + "/"
+    setStatus({ kind: "redirecting", url })
+    window.location.replace(url)
   }, [identifier, isAddress, ensName, isResolvingEns, resolvedAddress])
 
   return (
@@ -84,101 +67,44 @@ export default function Profile() {
           <Link to="/" className="font-semibold">
             Swarmtree
           </Link>
-          <div className="flex items-center gap-3">
-            {status.kind === "loaded" && (
-              <a
-                href={bzzUrl(status.hash, "profile.json")}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
-              >
-                View source on Swarm
-                <ExternalLink className="size-3" />
-              </a>
-            )}
-            <ConnectButton
-              showBalance={false}
-              chainStatus="icon"
-              accountStatus="avatar"
-            />
-          </div>
+          <ConnectButton
+            showBalance={false}
+            chainStatus="icon"
+            accountStatus="avatar"
+          />
         </div>
       </header>
 
       <div className="mx-auto max-w-2xl px-4 py-12">
-        {status.kind === "resolving" || status.kind === "loading" ? (
+        {status.kind === "resolving" ? (
           <div className="flex items-center justify-center py-24">
             <Loader2 className="size-8 animate-spin text-muted-foreground" />
           </div>
-        ) : status.kind === "not-found" ? (
-          <EmptyState
-            title="No Swarmtree found"
-            body={status.reason}
-            cta="Create one"
-          />
-        ) : status.kind === "error" ? (
-          <EmptyState
-            title="Couldn't load profile"
-            body={status.message}
-            cta="Back to home"
-          />
+        ) : status.kind === "redirecting" ? (
+          <div className="py-24 flex flex-col gap-3 items-center text-center">
+            <Loader2 className="size-8 animate-spin text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              Loading {identifier}'s Swarmtree from Swarm…
+            </p>
+            <a
+              href={status.url}
+              className="text-xs text-muted-foreground underline break-all"
+            >
+              {status.url}
+            </a>
+          </div>
         ) : (
-          <ProfileView profile={status.profile} />
+          <Card>
+            <CardContent className="py-12 text-center flex flex-col gap-3 items-center">
+              <h1 className="text-2xl font-semibold">No Swarmtree found</h1>
+              <p className="text-muted-foreground max-w-sm">{status.reason}</p>
+              <Link to="/" className="mt-2">
+                <Button>Back home</Button>
+              </Link>
+            </CardContent>
+          </Card>
         )}
       </div>
     </main>
-  )
-}
-
-function EmptyState({
-  title,
-  body,
-  cta,
-}: {
-  title: string
-  body: string
-  cta: string
-}) {
-  return (
-    <Card>
-      <CardContent className="py-12 text-center flex flex-col gap-3 items-center">
-        <h1 className="text-2xl font-semibold">{title}</h1>
-        <p className="text-muted-foreground max-w-sm">{body}</p>
-        <Link to="/" className="mt-2">
-          <Button>{cta}</Button>
-        </Link>
-      </CardContent>
-    </Card>
-  )
-}
-
-function ProfileView({ profile }: { profile: ProfileData }) {
-  return (
-    <article className="flex flex-col items-center text-center gap-3">
-      <h1 className="text-3xl font-semibold">{profile.title}</h1>
-      {profile.description && (
-        <p className="text-muted-foreground max-w-md">{profile.description}</p>
-      )}
-      {profile.ens && (
-        <p className="text-xs text-muted-foreground font-mono">{profile.ens}</p>
-      )}
-      <div className="w-full mt-6 flex flex-col gap-3">
-        {profile.links.map((link, i) => (
-          <a
-            key={i}
-            href={link.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block w-full"
-          >
-            <Card className="hover:border-foreground transition-colors py-4">
-              <CardContent className="px-4 py-0 text-center font-medium">
-                {link.label}
-              </CardContent>
-            </Card>
-          </a>
-        ))}
-      </div>
-    </article>
   )
 }

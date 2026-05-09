@@ -1,10 +1,24 @@
 import { useEffect, useState } from "react"
 import type { FormEvent } from "react"
 import { ConnectButton } from "@rainbow-me/rainbowkit"
-import { useAccount, useEnsName, useReadContract } from "wagmi"
+import {
+  useAccount,
+  useEnsName,
+  useReadContract,
+  useSignMessage,
+} from "wagmi"
 import { mainnet } from "wagmi/chains"
 import { namehash } from "viem"
-import { Check, Loader2, Plus, Trash2, X } from "lucide-react"
+import {
+  Check,
+  Copy,
+  ExternalLink,
+  Loader2,
+  Plus,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react"
 
 import { ensRegistryAbi } from "@/abi/ensRegistry"
 import { nameWrapperAbi } from "@/abi/nameWrapper"
@@ -20,6 +34,29 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import type { Profile } from "@/lib/profile"
+import {
+  downloadHtml,
+  generateProfileHtml,
+} from "@/lib/profile-generator"
+import { uploadProfileFolder } from "@/lib/upload"
+import { useStamp } from "@/hooks/useStamp"
+
+type UploadStatus =
+  | { kind: "idle" }
+  | { kind: "signing" }
+  | { kind: "uploading" }
+  | { kind: "success"; reference: string; bzzUrl: string }
+  | { kind: "error"; message: string }
+
+// Default = Vite dev-server proxy path (see vite.config.ts).
+// In dev this hits localhost:3000/api/swarm/bzz which Vite forwards to
+// https://beeport.ethswarm.org/bzz server-to-server, bypassing CORS.
+// For production deployments, point this at your own proxy origin.
+const BEEPORT_BACKEND_URL =
+  import.meta.env.VITE_BEEPORT_BACKEND_URL || "/api/swarm"
+const BEE_GATEWAY_URL =
+  import.meta.env.VITE_BEE_GATEWAY_URL || "https://api.gateway.ethswarm.org"
 
 interface LinkItem {
   id: string
@@ -142,17 +179,78 @@ export default function Dashboard() {
     setLinks((prev) => [...prev, newLink()])
   }
 
-  function handleSave(e: FormEvent) {
-    e.preventDefault()
-    const profile = {
+  const { batchId, setBatchId } = useStamp()
+  const { signMessageAsync } = useSignMessage()
+  const [uploadStatus, setUploadStatus] = useState<UploadStatus>({
+    kind: "idle",
+  })
+  const [copied, setCopied] = useState<"hash" | "entry" | null>(null)
+
+  function buildProfile(): Profile {
+    return {
+      version: 1,
+      address,
       ens: verifiedEns,
       title,
       description,
       links: links.map((l) => ({ label: l.label, url: l.url })),
+      updatedAt: new Date().toISOString(),
     }
-    console.log("Profile (preview only):", profile)
-    alert("Preview only — saves shipping in v2. Logged to console.")
   }
+
+  function handleSave(e: FormEvent) {
+    e.preventDefault()
+    const html = generateProfileHtml(buildProfile())
+    downloadHtml(html, "index.html")
+  }
+
+  async function handleUpload() {
+    if (!address || !batchId) return
+    setUploadStatus({ kind: "signing" })
+    try {
+      const html = generateProfileHtml(buildProfile())
+      // The wallet popup happens inside uploadProfileFolder via signMessageAsync.
+      // Once signed, the network upload starts — flip the status when the
+      // signature resolves so the spinner label is accurate.
+      const signWithStatus = async (args: { message: string }) => {
+        const sig = await signMessageAsync(args)
+        setUploadStatus({ kind: "uploading" })
+        return sig
+      }
+      const result = await uploadProfileFolder({
+        html,
+        batchId,
+        address,
+        backendUrl: BEEPORT_BACKEND_URL,
+        gatewayUrl: BEE_GATEWAY_URL,
+        signMessageAsync: signWithStatus,
+      })
+      setUploadStatus({
+        kind: "success",
+        reference: result.reference,
+        bzzUrl: result.bzzUrl,
+      })
+    } catch (err) {
+      setUploadStatus({
+        kind: "error",
+        message: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  async function copy(text: string, kind: "hash" | "entry") {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(kind)
+      setTimeout(() => setCopied(null), 1500)
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+
+  const isUploading =
+    uploadStatus.kind === "signing" || uploadStatus.kind === "uploading"
+  const canUpload = !!batchId && !!address && !isUploading
 
   const showVerified = verifiedEns && pendingVerify === verifiedEns
   const showFailed =
@@ -171,11 +269,49 @@ export default function Dashboard() {
         <div className="mb-6">
           <h1 className="text-2xl font-semibold">Edit your profile</h1>
           <p className="text-sm text-muted-foreground">
-            Preview only — changes log to the console for now.
+            <strong>Save &amp; upload</strong> sends your page to Swarm via
+            Beeport's open-source proxy.{" "}
+            <strong>Save &amp; download</strong> just gives you the{" "}
+            <code className="text-xs">index.html</code> for manual upload.
           </p>
         </div>
 
         <form onSubmit={handleSave} className="flex flex-col gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Stamp settings</CardTitle>
+              <CardDescription>
+                Paste your Beeport postage batch ID. You bought this when you
+                purchased storage on Beeport — it authorizes uploads from your
+                wallet. Stored locally only.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              <Label htmlFor="batchId">Postage batch ID</Label>
+              <Input
+                id="batchId"
+                placeholder="64-char hex (with or without 0x prefix)"
+                value={batchId}
+                onChange={(e) => setBatchId(e.target.value)}
+                autoComplete="off"
+                className="font-mono text-xs"
+              />
+              <p className="text-xs text-muted-foreground">
+                Don't have one? Buy a stamp at{" "}
+                <a
+                  href="https://beeport.ethswarm.org"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline inline-flex items-center gap-1"
+                >
+                  beeport.ethswarm.org
+                  <ExternalLink className="size-3" />
+                </a>
+                , then copy the batch ID from the History tab.
+              </p>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>ENS handle to attach</CardTitle>
@@ -317,9 +453,116 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          <div className="flex justify-end">
-            <Button type="submit" size="lg">
-              Save (preview only)
+          {(uploadStatus.kind === "success" ||
+            uploadStatus.kind === "error") && (
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  {uploadStatus.kind === "success"
+                    ? "Uploaded to Swarm"
+                    : "Upload failed"}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                {uploadStatus.kind === "success" ? (
+                  <>
+                    <div>
+                      <Label>Manifest hash</Label>
+                      <div className="flex items-center gap-2 mt-1">
+                        <code className="flex-1 text-xs font-mono bg-muted px-2 py-1.5 rounded break-all">
+                          {uploadStatus.reference}
+                        </code>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() =>
+                            copy(uploadStatus.reference, "hash")
+                          }
+                          aria-label="Copy hash"
+                        >
+                          {copied === "hash" ? (
+                            <Check className="size-4" />
+                          ) : (
+                            <Copy className="size-4" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Live URL</Label>
+                      <a
+                        href={uploadStatus.bzzUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-sm underline break-all mt-1"
+                      >
+                        {uploadStatus.bzzUrl}
+                      </a>
+                    </div>
+                    {address && (
+                      <div>
+                        <Label>
+                          Paste into{" "}
+                          <code className="text-xs">src/lib/directory.ts</code>
+                        </Label>
+                        <div className="flex items-center gap-2 mt-1">
+                          <code className="flex-1 text-xs font-mono bg-muted px-2 py-1.5 rounded break-all">
+                            "{address.toLowerCase()}": "
+                            {uploadStatus.reference}",
+                          </code>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() =>
+                              copy(
+                                `"${address.toLowerCase()}": "${uploadStatus.reference}",`,
+                                "entry"
+                              )
+                            }
+                            aria-label="Copy directory entry"
+                          >
+                            {copied === "entry" ? (
+                              <Check className="size-4" />
+                            ) : (
+                              <Copy className="size-4" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-destructive break-words">
+                    {uploadStatus.message}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Button type="submit" size="lg" variant="outline">
+              Save & download
+            </Button>
+            <Button
+              type="button"
+              size="lg"
+              onClick={handleUpload}
+              disabled={!canUpload}
+              title={!batchId ? "Add your batch ID above first" : undefined}
+            >
+              {isUploading ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Upload />
+              )}
+              {uploadStatus.kind === "signing"
+                ? "Sign in wallet…"
+                : uploadStatus.kind === "uploading"
+                  ? "Uploading…"
+                  : "Save & upload"}
             </Button>
           </div>
         </form>
