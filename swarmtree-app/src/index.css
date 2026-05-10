@@ -9,45 +9,109 @@
   --font-body: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
 
-  --background: oklch(0.985 0.005 80);
-  --foreground: oklch(0.18 0.02 60);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.18 0.02 60);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0.02 60);
-  --primary: oklch(0.72 0.19 50);
-  --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.96 0.04 70);
-  --secondary-foreground: oklch(0.30 0.12 50);
-  --muted: oklch(0.96 0.02 70);
-  --muted-foreground: oklch(0.48 0.03 60);
-  --accent: oklch(0.62 0.22 295);
-  --accent-foreground: oklch(0.99 0 0);
-  --destructive: oklch(0.58 0.24 27);
-  --border: oklch(0.92 0.02 70);
-  --input: oklch(0.92 0.02 70);
-  --ring: oklch(0.72 0.19 50);
+  /* SwarmTree brand */
+  --swarm-green:        #27AE60;
+  --swarm-green-light:  #52C985;
+  --swarm-green-dark:   #1A7A42;
+  --swarm-green-tint:   #D6F5E5;
+  --swarm-amber:        #E8951A;
+  --swarm-amber-light:  #FDE8BC;
+  --swarm-amber-dark:   #A86610;
+  --swarm-bark:         #B8894F;
+
+  /* Surfaces */
+  --swarm-bg:           #F4FAF0;
+  --swarm-bg-card:      #E2EFE0;
+  --swarm-bg-surface:   #FFFFFF;
+
+  /* Text */
+  --swarm-text-primary:   #0F1A12;
+  --swarm-text-secondary: #6B7B6E;
+  --swarm-text-on-dark:   #F4FAF0;
+
+  /* Borders — darker than spec so they're visible on the green-tinted page bg
+     (the original #F0F0EE was near-invisible on #F4FAF0). */
+  --swarm-border-light: #BDD3B9;
+  --swarm-border-dark:  #2A3D2E;
+
+  /* Shadcn tokens, remapped to the brand palette */
+  --background:           var(--swarm-bg);
+  --foreground:           var(--swarm-text-primary);
+  --card:                 var(--swarm-bg-card);
+  --card-foreground:      var(--swarm-text-primary);
+  --popover:              var(--swarm-bg-card);
+  --popover-foreground:   var(--swarm-text-primary);
+  --primary:              var(--swarm-green);
+  --primary-foreground:   #FFFFFF;
+  --secondary:            var(--swarm-green-tint);
+  --secondary-foreground: var(--swarm-green-dark);
+  --muted:                var(--swarm-bg-card);
+  --muted-foreground:     var(--swarm-text-secondary);
+  --accent:               var(--swarm-green-tint);
+  --accent-foreground:    var(--swarm-green-dark);
+  --destructive:          oklch(0.577 0.245 27.325);
+  --border:               var(--swarm-border-light);
+  --input:                var(--swarm-border-light);
+  --ring:                 var(--swarm-green-light);
 }
 
-.dark {
-  --background: oklch(0.18 0.02 60);
-  --foreground: oklch(0.98 0.005 80);
-  --card: oklch(0.22 0.03 60);
-  --card-foreground: oklch(0.98 0.005 80);
-  --popover: oklch(0.22 0.03 60);
-  --popover-foreground: oklch(0.98 0.005 80);
-  --primary: oklch(0.78 0.18 55);
-  --primary-foreground: oklch(0.18 0.02 60);
-  --secondary: oklch(0.30 0.05 60);
-  --secondary-foreground: oklch(0.98 0.005 80);
-  --muted: oklch(0.28 0.03 60);
-  --muted-foreground: oklch(0.70 0.03 70);
-  --accent: oklch(0.72 0.22 295);
-  --accent-foreground: oklch(0.99 0 0);
-  --destructive: oklch(0.65 0.22 27);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.78 0.18 55);
+/* Dark mode — explicit `.dark` class wins, with `prefers-color-scheme: dark`
+   as a fallback for users who haven't toggled the app theme. */
+.dark,
+:root:where(.dark, .dark *) {
+  --swarm-bg:           #0F1A12;
+  --swarm-bg-card:      #1B3020;
+  --swarm-bg-surface:   #1B3020;
+  --swarm-text-primary: #F4FAF0;
+  --swarm-border-light: #2A3D2E;
+
+  --background:           var(--swarm-bg);
+  --foreground:           var(--swarm-text-primary);
+  --card:                 var(--swarm-bg-card);
+  --card-foreground:      var(--swarm-text-primary);
+  --popover:              var(--swarm-bg-card);
+  --popover-foreground:   var(--swarm-text-primary);
+  --primary:              var(--swarm-green-light);
+  --primary-foreground:   #0F1A12;
+  --secondary:            var(--swarm-bg-card);
+  --secondary-foreground: var(--swarm-text-primary);
+  --muted:                var(--swarm-bg-card);
+  --muted-foreground:     #A8B5AB;
+  --accent:               var(--swarm-green-dark);
+  --accent-foreground:    var(--swarm-text-on-dark);
+  --destructive:          oklch(0.704 0.191 22.216);
+  --border:               var(--swarm-border-light);
+  --input:                var(--swarm-border-light);
+  --ring:                 var(--swarm-green-light);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --swarm-bg:           #0F1A12;
+    --swarm-bg-card:      #1B3020;
+    --swarm-bg-surface:   #1B3020;
+    --swarm-text-primary: #F4FAF0;
+    --swarm-border-light: #2A3D2E;
+
+    --background:           var(--swarm-bg);
+    --foreground:           var(--swarm-text-primary);
+    --card:                 var(--swarm-bg-card);
+    --card-foreground:      var(--swarm-text-primary);
+    --popover:              var(--swarm-bg-card);
+    --popover-foreground:   var(--swarm-text-primary);
+    --primary:              var(--swarm-green-light);
+    --primary-foreground:   #0F1A12;
+    --secondary:            var(--swarm-bg-card);
+    --secondary-foreground: var(--swarm-text-primary);
+    --muted:                var(--swarm-bg-card);
+    --muted-foreground:     #A8B5AB;
+    --accent:               var(--swarm-green-dark);
+    --accent-foreground:    var(--swarm-text-on-dark);
+    --destructive:          oklch(0.704 0.191 22.216);
+    --border:               var(--swarm-border-light);
+    --input:                var(--swarm-border-light);
+    --ring:                 var(--swarm-green-light);
+  }
 }
 
 @theme inline {
@@ -73,8 +137,19 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --font-sans: var(--font-body);
-  --font-display: var(--font-display);
+
+  /* SwarmTree brand utilities — bg-swarm-green, text-swarm-amber, etc. */
+  --color-swarm-green:       var(--swarm-green);
+  --color-swarm-green-light: var(--swarm-green-light);
+  --color-swarm-green-dark:  var(--swarm-green-dark);
+  --color-swarm-green-tint:  var(--swarm-green-tint);
+  --color-swarm-amber:       var(--swarm-amber);
+  --color-swarm-amber-light: var(--swarm-amber-light);
+  --color-swarm-amber-dark:  var(--swarm-amber-dark);
+  --color-swarm-bark:        var(--swarm-bark);
+
+  --font-sans: Inter, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
 }
 
 @layer base {

@@ -9,19 +9,22 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
+        // Shadows tinted with the brand green so they match the primary fill.
+        // Hover swaps to a clearly darker shade (luminance shift) — important
+        // for colorblind users, who can't rely on hue alone.
         default:
-          "bg-primary text-primary-foreground shadow-[0_4px_14px_-4px_oklch(0.72_0.19_50/0.45)] hover:shadow-[0_6px_22px_-4px_oklch(0.72_0.19_50/0.55)] hover:bg-primary/95 hover:-translate-y-px",
+          "bg-primary text-primary-foreground shadow-[0_4px_14px_-4px_rgb(39_174_96/0.45)] hover:shadow-[0_6px_22px_-4px_rgb(26_122_66/0.6)] hover:bg-swarm-green-dark hover:-translate-y-px dark:hover:bg-swarm-green",
         destructive:
-          "bg-destructive text-white shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
+          "bg-destructive text-white shadow-sm hover:brightness-90 hover:shadow-md focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:
-          "border bg-background hover:bg-accent/10 hover:border-accent/40 hover:text-accent dark:bg-input/30 dark:border-input",
+          "border-2 border-swarm-green-dark bg-white text-swarm-green-dark shadow-sm hover:bg-swarm-green-dark hover:text-white hover:shadow-md dark:bg-input/30 dark:border-swarm-green-light dark:text-swarm-green-light dark:hover:bg-swarm-green-light dark:hover:text-swarm-bg-card",
         secondary:
-          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+          "bg-secondary text-secondary-foreground border border-swarm-green-dark/30 hover:bg-swarm-green-dark hover:text-white hover:border-swarm-green-dark",
         ghost:
-          "hover:bg-muted hover:text-foreground dark:hover:bg-accent/20",
-        link: "text-primary underline-offset-4 hover:underline rounded-none",
+          "text-swarm-green-dark hover:bg-swarm-green-tint hover:text-swarm-green-dark dark:text-swarm-green-light dark:hover:bg-swarm-green-dark dark:hover:text-swarm-text-on-dark",
+        link: "text-primary underline-offset-4 hover:underline hover:text-swarm-green-dark rounded-none",
         accent:
-          "bg-accent text-accent-foreground shadow-[0_4px_14px_-4px_oklch(0.62_0.22_295/0.5)] hover:shadow-[0_6px_22px_-4px_oklch(0.62_0.22_295/0.6)] hover:bg-accent/95 hover:-translate-y-px",
+          "bg-swarm-amber text-white shadow-[0_4px_14px_-4px_rgb(232_149_26/0.5)] hover:shadow-[0_6px_22px_-4px_rgb(168_102_16/0.6)] hover:bg-swarm-amber-dark hover:-translate-y-px",
       },
       size: {
         default: "h-9 px-5 py-2 has-[>svg]:px-4",
