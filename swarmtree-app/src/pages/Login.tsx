@@ -32,8 +32,43 @@ export default function Login() {
   }
 
   return (
-    <main className="min-h-svh flex items-center justify-center px-4 bg-background">
-      <div className="w-full max-w-md flex flex-col gap-6">
+    <main className="relative min-h-svh flex items-center justify-center px-4 bg-background overflow-hidden">
+      <svg
+        aria-hidden="true"
+        className="absolute inset-0 w-full h-full text-foreground/[0.07] pointer-events-none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <defs>
+          <pattern
+            id="login-hex"
+            width="72"
+            height="82"
+            patternUnits="userSpaceOnUse"
+            patternTransform="translate(0 0)"
+          >
+            <path
+              d="M36 0 L72 20.5 L72 61.5 L36 82 L0 61.5 L0 20.5 Z"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1"
+            />
+          </pattern>
+          <radialGradient id="login-hex-fade" cx="50%" cy="50%" r="60%">
+            <stop offset="0%" stopColor="white" stopOpacity="1" />
+            <stop offset="100%" stopColor="white" stopOpacity="0" />
+          </radialGradient>
+          <mask id="login-hex-mask">
+            <rect width="100%" height="100%" fill="url(#login-hex-fade)" />
+          </mask>
+        </defs>
+        <rect
+          width="100%"
+          height="100%"
+          fill="url(#login-hex)"
+          mask="url(#login-hex-mask)"
+        />
+      </svg>
+      <div className="relative w-full max-w-md flex flex-col gap-6">
         <Card>
           <CardHeader className="text-center">
             <CardTitle className="text-2xl flex items-center justify-center gap-2">

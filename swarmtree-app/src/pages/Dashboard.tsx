@@ -366,9 +366,9 @@ export default function Dashboard() {
     <main className="min-h-svh bg-background text-foreground">
       <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr_420px] min-h-svh">
         {/* LEFT RAIL */}
-        <aside className="hidden lg:flex flex-col border-r border-border relative overflow-hidden">
+        <aside className="hidden lg:flex flex-col border-r border-border overflow-hidden sticky top-0 h-svh self-start">
           <HexBg className="absolute inset-0 text-foreground/[0.06] pointer-events-none" />
-          <div className="relative p-6 flex flex-col h-full gap-6">
+          <div className="relative p-6 flex flex-col h-full gap-6 overflow-y-auto">
             <Link to="/" className="flex items-center gap-2.5">
               <img src="/favicon.svg" alt="Swarmtree" className="size-9" />
               <span className="font-display text-lg font-semibold tracking-tight">
