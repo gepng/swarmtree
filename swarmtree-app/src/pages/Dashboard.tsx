@@ -47,6 +47,7 @@ import {
 import { saveProfileHash } from "@/lib/directory"
 import { uploadProfileFolder } from "@/lib/upload"
 import { useStamps } from "@/hooks/useStamp"
+import { useExistingProfile } from "@/hooks/useExistingProfile"
 import { HexBg } from "@/components/HexBg"
 import { PhonePreview } from "@/components/PhonePreview"
 
@@ -54,11 +55,11 @@ type UploadStatus =
   | { kind: "idle" }
   | { kind: "uploading" }
   | {
-      kind: "success"
-      reference: string
-      bzzUrl: string
-      localBzzUrl: string
-    }
+    kind: "success"
+    reference: string
+    bzzUrl: string
+    localBzzUrl: string
+  }
   | { kind: "error"; message: string }
 
 // Local Bee light node — uploads + stamp listing go here. Bee must be started
@@ -174,6 +175,44 @@ export default function Dashboard() {
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
   const [links, setLinks] = useState<LinkItem[]>([newLink()])
+
+  // Look up existing on-chain Swarm contenthash. Reading is public, so we run
+  // detection against the wallet's primary ENS as soon as we know it — no need
+  // to wait for the explicit Verify step (verify is for WRITE authorization).
+  const detectionEns = verifiedEns ?? primaryEns ?? null
+  const existing = useExistingProfile({
+    ensName: detectionEns,
+    beeUrl: BEE_API_URL,
+    publicGatewayUrl: SWARM_READ_URL,
+  })
+
+  // Prefill the form once whenever a fresh existing profile is detected for a
+  // new reference. Subsequent edits in the form are preserved.
+  const [prefilledRef, setPrefilledRef] = useState<string | null>(null)
+  useEffect(() => {
+    if (existing.kind !== "found") return
+    if (prefilledRef === existing.reference) return
+    setTitle(existing.profile.title)
+    setDescription(existing.profile.description)
+    setLinks(
+      existing.profile.links.length > 0
+        ? existing.profile.links.map((l) => ({
+            id: crypto.randomUUID(),
+            label: l.label,
+            url: l.url,
+          }))
+        : [newLink()]
+    )
+    setPrefilledRef(existing.reference)
+  }, [existing, prefilledRef])
+
+  // Reset prefill marker when ENS is unverified, so a re-verify with the same
+  // name re-prefills.
+  useEffect(() => {
+    if (!verifiedEns) setPrefilledRef(null)
+  }, [verifiedEns])
+
+  const isEditing = existing.kind === "found"
 
   function updateLink(id: string, patch: Partial<LinkItem>) {
     setLinks((prev) =>
@@ -342,9 +381,9 @@ export default function Dashboard() {
       filledLinks.length > 0
         ? filledLinks
         : [
-            { label: "Add your first link →", url: "#" },
-            { label: "And another", url: "#" },
-          ],
+          { label: "Add your first link →", url: "#" },
+          { label: "And another", url: "#" },
+        ],
   }
 
   const statusLabel =
@@ -420,473 +459,533 @@ export default function Dashboard() {
           </div>
 
           <div className="mb-8">
-            <h1 className="font-display text-3xl lg:text-4xl font-semibold">
-              Edit your profile
-            </h1>
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="font-display text-3xl lg:text-4xl font-semibold">
+                {isEditing ? "Edit your Swarmtree" : "Create your Swarmtree"}
+              </h1>
+              {existing.kind === "detecting" && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground bg-muted px-2.5 py-1 rounded-full">
+                  <Loader2 className="size-3 animate-spin" />
+                  Looking up your Swarmtree…
+                </span>
+              )}
+              {existing.kind === "fetching" && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground bg-muted px-2.5 py-1 rounded-full">
+                  <Loader2 className="size-3 animate-spin" />
+                  Loading existing profile…
+                </span>
+              )}
+              {existing.kind === "found" && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-primary bg-primary/10 px-2.5 py-1 rounded-full font-medium">
+                  Live · {existing.reference.slice(0, 10)}…
+                </span>
+              )}
+            </div>
             <p className="text-sm text-muted-foreground mt-2 max-w-md">
-              <strong>Save &amp; upload</strong> publishes directly to Swarm.{" "}
-              <strong>Save &amp; download</strong> exports the{" "}
-              <code className="text-xs">index.html</code> for manual upload.
+              {isEditing ? (
+                <>
+                  Editing the profile currently published at{" "}
+                  <code className="text-xs">{verifiedEns}.limo</code>. Save to
+                  upload a new version; <strong>Update</strong> sets the ENS
+                  contenthash to the new hash.
+                </>
+              ) : (
+                <>
+                  <strong>Save &amp; upload</strong> publishes to Swarm.{" "}
+                  <strong>Save &amp; download</strong> exports the{" "}
+                  <code className="text-xs">index.html</code> for manual upload.
+                </>
+              )}
             </p>
+            {existing.kind === "create-non-swarm" && (
+              <p className="mt-3 text-xs text-amber-700 dark:text-amber-500 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-md px-3 py-2">
+                <strong>{verifiedEns}</strong> currently has a non-Swarm Content
+                Hash record. Saving will overwrite it.
+              </p>
+            )}
+            {existing.kind === "create-unparseable" && (
+              <p className="mt-3 text-xs text-amber-700 dark:text-amber-500 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-md px-3 py-2">
+                Found an existing Swarm contenthash on{" "}
+                <strong>{verifiedEns}</strong> but couldn't parse the profile
+                (uploaded outside Swarmtree). Starting fresh — saving will
+                overwrite.
+              </p>
+            )}
+            {existing.kind === "error" && (
+              <p className="mt-3 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-md px-3 py-2">
+                Couldn't load existing profile: {existing.message}
+              </p>
+            )}
           </div>
 
           <form onSubmit={handleSave} className="flex flex-col gap-6">
-          <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-4">
-              <div className="flex-1">
-                <CardTitle>Postage stamp</CardTitle>
-                <CardDescription>
-                  Pulled live from your Bee node at{" "}
-                  <code className="text-xs">{BEE_API_URL}</code>. The chosen
-                  stamp authorizes the upload.
-                </CardDescription>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={refetchStamps}
-                disabled={stampsLoading}
-                aria-label="Refresh stamps"
-                title="Refresh stamps"
-              >
-                <RefreshCw
-                  className={stampsLoading ? "animate-spin" : undefined}
-                />
-              </Button>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-2">
-              {stampsLoading ? (
-                <p className="text-sm text-muted-foreground inline-flex items-center gap-2">
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading stamps from your Bee…
-                </p>
-              ) : stampsError ? (
-                <div className="flex flex-col gap-2">
-                  <p className="text-sm text-destructive">
-                    Couldn't reach Bee at{" "}
-                    <code className="text-xs">{BEE_API_URL}</code>.
-                  </p>
-                  <p className="text-xs text-muted-foreground break-words">
-                    {stampsError}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Make sure your node is running and started with{" "}
-                    <code className="text-xs">
-                      --cors-allowed-origins "http://localhost:3000"
-                    </code>
-                    .
-                  </p>
+            <Card>
+              <CardHeader className="flex flex-row items-start justify-between gap-4">
+                <div className="flex-1">
+                  <CardTitle>Postage stamp</CardTitle>
+                  <CardDescription>
+                    Pulled live from your Bee node at{" "}
+                    <code className="text-xs">{BEE_API_URL}</code>. The chosen
+                    stamp authorizes the upload.
+                  </CardDescription>
                 </div>
-              ) : stamps.length === 0 ? (
-                <div className="flex flex-col gap-2">
-                  <p className="text-sm">No usable postage stamps yet.</p>
-                  <p className="text-xs text-muted-foreground">
-                    Buy one from a terminal:{" "}
-                    <code className="text-xs">swarm-cli stamp create</code>,
-                    then click refresh.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <Label htmlFor="batchId">Stamp</Label>
-                  <select
-                    id="batchId"
-                    value={selectedId}
-                    onChange={(e) => setSelectedId(e.target.value)}
-                    className="font-mono text-xs h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] cursor-pointer"
-                  >
-                    {stamps.map((s) => (
-                      <option key={s.batchId} value={s.batchId}>
-                        {s.label} · {s.usageText} used · depth {s.depth} ·{" "}
-                        {s.batchId.slice(0, 10)}…
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-muted-foreground">
-                    {stamps.length} usable stamp{stamps.length === 1 ? "" : "s"}{" "}
-                    available. New stamp:{" "}
-                    <code className="text-xs">swarm-cli stamp create</code>.
-                  </p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>ENS handle to attach</CardTitle>
-              <CardDescription>
-                Verify ownership of an ENS name that resolves to your connected wallet.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-2">
-              <Label htmlFor="ens">ENS name</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="ens"
-                  placeholder="alice.eth"
-                  value={ensInput}
-                  onChange={(e) => handleEnsInputChange(e.target.value)}
-                  className="flex-1"
-                  autoComplete="off"
-                />
                 <Button
                   type="button"
-                  onClick={handleVerify}
-                  disabled={!ensInput.trim() || isVerifying}
+                  variant="ghost"
+                  size="icon"
+                  onClick={refetchStamps}
+                  disabled={stampsLoading}
+                  aria-label="Refresh stamps"
+                  title="Refresh stamps"
                 >
-                  {isVerifying ? (
-                    <Loader2 className="animate-spin" />
-                  ) : (
-                    "Verify"
-                  )}
+                  <RefreshCw
+                    className={stampsLoading ? "animate-spin" : undefined}
+                  />
                 </Button>
-              </div>
-              {showVerified && (
-                <div className="mt-1 flex flex-col gap-1">
-                  <p className="text-sm text-green-600 dark:text-green-500 flex items-center gap-1.5">
-                    <Check className="size-4" />
-                    Verified — your wallet controls {verifiedEns}
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {stampsLoading ? (
+                  <p className="text-sm text-muted-foreground inline-flex items-center gap-2">
+                    <Loader2 className="size-4 animate-spin" />
+                    Loading stamps from your Bee…
                   </p>
-                  <p className="text-xs text-muted-foreground">
-                    Your profile will live at{" "}
-                    <code className="bg-muted px-1 py-0.5 rounded">
-                      {verifiedEns}.limo
-                    </code>
-                  </p>
-                </div>
-              )}
-              {showFailed && (
-                <p className="mt-1 text-sm text-destructive flex items-center gap-1.5">
-                  <X className="size-4" />
-                  {verifyError
-                    ? "Lookup failed — check the name or try again"
-                    : `Your wallet doesn't control ${pendingVerify}`}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Profile</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="title">Title</Label>
-                <Input
-                  id="title"
-                  placeholder="e.g. Alice — Builder, Coffee Drinker"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="description">Description</Label>
-                <Textarea
-                  id="description"
-                  placeholder="A short bio that shows up under your name."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={4}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Links</CardTitle>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addLink}
-              >
-                <Plus />
-                Add link
-              </Button>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              {links.map((link, i) => (
-                <div
-                  key={link.id}
-                  className="grid grid-cols-[1fr_2fr_auto] gap-2 items-end"
-                >
+                ) : stampsError ? (
                   <div className="flex flex-col gap-2">
-                    {i === 0 && (
-                      <Label htmlFor={`label-${link.id}`}>Label</Label>
-                    )}
-                    <Input
-                      id={`label-${link.id}`}
-                      placeholder="Twitter"
-                      value={link.label}
-                      onChange={(e) =>
-                        updateLink(link.id, { label: e.target.value })
-                      }
-                    />
+                    <p className="text-sm text-destructive">
+                      Couldn't reach Bee at{" "}
+                      <code className="text-xs">{BEE_API_URL}</code>.
+                    </p>
+                    <p className="text-xs text-muted-foreground break-words">
+                      {stampsError}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Make sure your node is running and started with{" "}
+                      <code className="text-xs">
+                        --cors-allowed-origins "http://localhost:3000"
+                      </code>
+                      .
+                    </p>
                   </div>
+                ) : stamps.length === 0 ? (
                   <div className="flex flex-col gap-2">
-                    {i === 0 && <Label htmlFor={`url-${link.id}`}>URL</Label>}
-                    <Input
-                      id={`url-${link.id}`}
-                      type="url"
-                      placeholder="https://..."
-                      value={link.url}
-                      onChange={(e) =>
-                        updateLink(link.id, { url: e.target.value })
-                      }
-                    />
+                    <p className="text-sm">No usable postage stamps yet.</p>
+                    <p className="text-xs text-muted-foreground">
+                      Buy one from a terminal:{" "}
+                      <code className="text-xs">swarm-cli stamp create</code>,
+                      then click refresh.
+                    </p>
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removeLink(link.id)}
-                    disabled={links.length === 1}
-                    aria-label="Remove link"
-                  >
-                    <Trash2 />
-                  </Button>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+                ) : (
+                  <>
+                    <Label htmlFor="batchId">Stamp</Label>
+                    <select
+                      id="batchId"
+                      value={selectedId}
+                      onChange={(e) => setSelectedId(e.target.value)}
+                      className="font-mono text-xs h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] cursor-pointer"
+                    >
+                      {stamps.map((s) => (
+                        <option key={s.batchId} value={s.batchId}>
+                          {s.label} · {s.usageText} used · depth {s.depth} ·{" "}
+                          {s.batchId.slice(0, 10)}…
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      {stamps.length} usable stamp{stamps.length === 1 ? "" : "s"}{" "}
+                      available. New stamp:{" "}
+                      <code className="text-xs">swarm-cli stamp create</code>.
+                    </p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
 
-          {(uploadStatus.kind === "success" ||
-            uploadStatus.kind === "error") && (
             <Card>
               <CardHeader>
-                <CardTitle>
-                  {uploadStatus.kind === "success"
-                    ? "Uploaded to Swarm"
-                    : "Upload failed"}
-                </CardTitle>
+                <CardTitle>ENS handle to attach</CardTitle>
+                <CardDescription>
+                  Verify ownership of an ENS name that resolves to your connected wallet.
+                </CardDescription>
               </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                {uploadStatus.kind === "success" ? (
-                  <>
-                    <div>
-                      <Label>Manifest hash</Label>
-                      <div className="flex items-center gap-2 mt-1">
-                        <code className="flex-1 text-xs font-mono bg-muted px-2 py-1.5 rounded break-all">
-                          {uploadStatus.reference}
-                        </code>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={() =>
-                            copy(uploadStatus.reference, "hash")
-                          }
-                          aria-label="Copy hash"
-                        >
-                          {copied === "hash" ? (
-                            <Check className="size-4" />
-                          ) : (
-                            <Copy className="size-4" />
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                    <div>
-                      <Label>View on your local Bee</Label>
-                      <div className="mt-1 flex flex-col gap-2">
-                        <a
-                          href={uploadStatus.localBzzUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          <Button
-                            type="button"
-                            variant="default"
-                            className="w-full"
-                          >
-                            <ExternalLink />
-                            View page (your Bee)
-                          </Button>
-                        </a>
-                        <a
-                          href={uploadStatus.localBzzUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-muted-foreground underline break-all"
-                        >
-                          {uploadStatus.localBzzUrl}
-                        </a>
-                      </div>
-                    </div>
-                    <div>
-                      <Label>Make it public via ENS</Label>
-                      <div className="mt-1 flex flex-col gap-3">
-                        {verifiedEns ? (
-                          <>
-                            <p className="text-xs text-muted-foreground">
-                              Sets the Content Hash record on{" "}
-                              <code className="text-[0.65rem]">
-                                {verifiedEns}
-                              </code>{" "}
-                              so the page lives at{" "}
-                              <code className="text-[0.65rem]">
-                                {verifiedEns}.limo
-                              </code>
-                              . One Ethereum mainnet tx (you'll pay ETH gas).
-                            </p>
-                            {isPublishConfirmed ? (
-                              <a
-                                href={`https://${verifiedEns}.limo/`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                <Button
-                                  type="button"
-                                  variant="default"
-                                  className="w-full"
-                                >
-                                  <ExternalLink />
-                                  Open {verifiedEns}.limo
-                                </Button>
-                              </a>
-                            ) : (
-                              <Button
-                                type="button"
-                                variant="accent"
-                                onClick={handlePublishEns}
-                                disabled={!canPublish}
-                                className="w-full"
-                              >
-                                {isPublishing ? (
-                                  <>
-                                    <Loader2 className="animate-spin" />
-                                    Confirm in wallet…
-                                  </>
-                                ) : isPublishConfirming ? (
-                                  <>
-                                    <Loader2 className="animate-spin" />
-                                    Publishing on-chain…
-                                  </>
-                                ) : (
-                                  <>Publish to {verifiedEns}</>
-                                )}
-                              </Button>
-                            )}
-                            {publishTxHash && !isPublishConfirmed && (
-                              <a
-                                href={`https://etherscan.io/tx/${publishTxHash}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-[0.7rem] text-muted-foreground underline"
-                              >
-                                View tx on Etherscan
-                              </a>
-                            )}
-                            {publishError && (
-                              <p className="text-xs text-destructive break-words">
-                                {publishError instanceof Error
-                                  ? publishError.message
-                                  : String(publishError)}
-                              </p>
-                            )}
-                          </>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">
-                            Verify an ENS name above to enable one-click
-                            publishing. Or paste{" "}
-                            <code className="text-[0.65rem]">
-                              bzz://{uploadStatus.reference}
-                            </code>{" "}
-                            into your name's Content Hash record at
-                            app.ens.domains.
-                          </p>
-                        )}
-
-                        <div className="flex items-center gap-2">
-                          <code className="flex-1 text-xs font-mono bg-muted px-2 py-1.5 rounded break-all">
-                            bzz://{uploadStatus.reference}
-                          </code>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            onClick={() =>
-                              copy(
-                                `bzz://${uploadStatus.reference}`,
-                                "entry"
-                              )
-                            }
-                            aria-label="Copy bzz:// URL"
-                          >
-                            {copied === "entry" ? (
-                              <Check className="size-4" />
-                            ) : (
-                              <Copy className="size-4" />
-                            )}
-                          </Button>
-                        </div>
-
-                        <p className="text-[0.65rem] text-muted-foreground">
-                          Public gateway (gated):{" "}
-                          <a
-                            href={uploadStatus.bzzUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="underline break-all"
-                          >
-                            {uploadStatus.bzzUrl}
-                          </a>
-                        </p>
-                      </div>
-                    </div>
-                    <div>
-                      <Label>In-app route</Label>
-                      <div className="mt-1 flex flex-col gap-1">
-                        {address && (
-                          <Link
-                            to={`/u/${address.toLowerCase()}`}
-                            className="text-xs text-muted-foreground"
-                          >
-                            <code className="underline">
-                              /u/{address.toLowerCase().slice(0, 10)}…
-                            </code>{" "}
-                            (redirects to public URL — same gate as above
-                            applies)
-                          </Link>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <p className="text-sm text-destructive break-words">
-                    {uploadStatus.message}
+              <CardContent className="flex flex-col gap-2">
+                <Label htmlFor="ens">ENS name</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="ens"
+                    placeholder="alice.eth"
+                    value={ensInput}
+                    onChange={(e) => handleEnsInputChange(e.target.value)}
+                    className="flex-1"
+                    autoComplete="off"
+                  />
+                  <Button
+                    type="button"
+                    onClick={handleVerify}
+                    disabled={!ensInput.trim() || isVerifying}
+                  >
+                    {isVerifying ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      "Verify"
+                    )}
+                  </Button>
+                </div>
+                {showVerified && (
+                  <div className="mt-1 flex flex-col gap-1">
+                    <p className="text-sm text-green-600 dark:text-green-500 flex items-center gap-1.5">
+                      <Check className="size-4" />
+                      Verified — your wallet controls {verifiedEns}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Your profile will live at{" "}
+                      <code className="bg-muted px-1 py-0.5 rounded">
+                        {verifiedEns}.limo
+                      </code>
+                    </p>
+                  </div>
+                )}
+                {showFailed && (
+                  <p className="mt-1 text-sm text-destructive flex items-center gap-1.5">
+                    <X className="size-4" />
+                    {verifyError
+                      ? "Lookup failed — check the name or try again"
+                      : `Your wallet doesn't control ${pendingVerify}`}
                   </p>
                 )}
               </CardContent>
             </Card>
-          )}
 
-          <div className="flex justify-end gap-2">
-            <Button type="submit" size="lg" variant="outline">
-              Save & download
-            </Button>
-            <Button
-              type="button"
-              size="lg"
-              onClick={handleUpload}
-              disabled={!canUpload}
-              title={!selectedId ? "Pick a stamp above first" : undefined}
-            >
-              {isUploading ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <Upload />
+            <Card>
+              <CardHeader>
+                <CardTitle>Profile</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="title">Title</Label>
+                  <Input
+                    id="title"
+                    placeholder="e.g. Alice — Builder, Coffee Drinker"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="description">Description</Label>
+                  <Textarea
+                    id="description"
+                    placeholder="A short bio that shows up under your name."
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    rows={4}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle>Links</CardTitle>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addLink}
+                >
+                  <Plus />
+                  Add link
+                </Button>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                {links.map((link, i) => (
+                  <div
+                    key={link.id}
+                    className="grid grid-cols-[1fr_2fr_auto] gap-2 items-end"
+                  >
+                    <div className="flex flex-col gap-2">
+                      {i === 0 && (
+                        <Label htmlFor={`label-${link.id}`}>Label</Label>
+                      )}
+                      <Input
+                        id={`label-${link.id}`}
+                        placeholder="Twitter"
+                        value={link.label}
+                        onChange={(e) =>
+                          updateLink(link.id, { label: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {i === 0 && <Label htmlFor={`url-${link.id}`}>URL</Label>}
+                      <Input
+                        id={`url-${link.id}`}
+                        type="url"
+                        placeholder="https://..."
+                        value={link.url}
+                        onChange={(e) =>
+                          updateLink(link.id, { url: e.target.value })
+                        }
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeLink(link.id)}
+                      disabled={links.length === 1}
+                      aria-label="Remove link"
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            {(uploadStatus.kind === "success" ||
+              uploadStatus.kind === "error") && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>
+                      {uploadStatus.kind === "success"
+                        ? "Uploaded to Swarm"
+                        : "Upload failed"}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex flex-col gap-4">
+                    {uploadStatus.kind === "success" ? (
+                      <>
+                        <div>
+                          <Label>Manifest hash</Label>
+                          <div className="flex items-center gap-2 mt-1">
+                            <code className="flex-1 text-xs font-mono bg-muted px-2 py-1.5 rounded break-all">
+                              {uploadStatus.reference}
+                            </code>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              onClick={() =>
+                                copy(uploadStatus.reference, "hash")
+                              }
+                              aria-label="Copy hash"
+                            >
+                              {copied === "hash" ? (
+                                <Check className="size-4" />
+                              ) : (
+                                <Copy className="size-4" />
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                        <div>
+                          <Label>View on your local Bee</Label>
+                          <div className="mt-1 flex flex-col gap-2">
+                            <a
+                              href={uploadStatus.localBzzUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              <Button
+                                type="button"
+                                variant="default"
+                                className="w-full"
+                              >
+                                <ExternalLink />
+                                View page (your Bee)
+                              </Button>
+                            </a>
+                            <a
+                              href={uploadStatus.localBzzUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-muted-foreground underline break-all"
+                            >
+                              {uploadStatus.localBzzUrl}
+                            </a>
+                          </div>
+                        </div>
+                        <div>
+                          <Label>Make it public via ENS</Label>
+                          <div className="mt-1 flex flex-col gap-3">
+                            {verifiedEns ? (
+                              <>
+                                <p className="text-xs text-muted-foreground">
+                                  Sets the Content Hash record on{" "}
+                                  <code className="text-[0.65rem]">
+                                    {verifiedEns}
+                                  </code>{" "}
+                                  so the page lives at{" "}
+                                  <code className="text-[0.65rem]">
+                                    {verifiedEns}.limo
+                                  </code>
+                                  . One Ethereum mainnet tx (you'll pay ETH gas).
+                                </p>
+                                {isPublishConfirmed ? (
+                                  <div className="flex flex-col gap-2">
+                                    <a
+                                      href={`https://${verifiedEns}.limo/?_t=${uploadStatus.kind === "success" ? uploadStatus.reference.slice(0, 8) : Date.now()}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                    >
+                                      <Button
+                                        type="button"
+                                        variant="default"
+                                        className="w-full"
+                                      >
+                                        <ExternalLink />
+                                        Open {verifiedEns}.limo
+                                      </Button>
+                                    </a>
+                                    <div className="flex items-center justify-between gap-3 text-[0.7rem] text-muted-foreground">
+                                      <a
+                                        href={`https://${verifiedEns.replace(/\.eth$/, "")}.bzz.link/`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="underline"
+                                      >
+                                        Try bzz.link instead
+                                      </a>
+                                      <a
+                                        href={`https://app.ens.domains/${verifiedEns}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="underline"
+                                      >
+                                        Verify record on app.ens.domains
+                                      </a>
+                                    </div>
+                                    <p className="text-[0.7rem] text-muted-foreground">
+                                      eth.limo's CDN may serve a stale copy for
+                                      ~5–15 min. Hard-refresh (Cmd+Shift+R), or
+                                      use bzz.link / your local Bee for instant
+                                      verification.
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <Button
+                                    type="button"
+                                    variant="accent"
+                                    onClick={handlePublishEns}
+                                    disabled={!canPublish}
+                                    className="w-full"
+                                  >
+                                    {isPublishing ? (
+                                      <>
+                                        <Loader2 className="animate-spin" />
+                                        Confirm in wallet…
+                                      </>
+                                    ) : isPublishConfirming ? (
+                                      <>
+                                        <Loader2 className="animate-spin" />
+                                        Publishing on-chain…
+                                      </>
+                                    ) : isEditing ? (
+                                      <>Update {verifiedEns}</>
+                                    ) : (
+                                      <>Publish to {verifiedEns}</>
+                                    )}
+                                  </Button>
+                                )}
+                                {publishTxHash && !isPublishConfirmed && (
+                                  <a
+                                    href={`https://etherscan.io/tx/${publishTxHash}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[0.7rem] text-muted-foreground underline"
+                                  >
+                                    View tx on Etherscan
+                                  </a>
+                                )}
+                                {publishError && (
+                                  <p className="text-xs text-destructive break-words">
+                                    {publishError instanceof Error
+                                      ? publishError.message
+                                      : String(publishError)}
+                                  </p>
+                                )}
+                              </>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">
+                                Verify an ENS name above to enable one-click
+                                publishing. Or paste{" "}
+                                <code className="text-[0.65rem]">
+                                  bzz://{uploadStatus.reference}
+                                </code>{" "}
+                                into your name's Content Hash record at
+                                app.ens.domains.
+                              </p>
+                            )}
+
+                            <div className="flex items-center gap-2">
+                              <code className="flex-1 text-xs font-mono bg-muted px-2 py-1.5 rounded break-all">
+                                bzz://{uploadStatus.reference}
+                              </code>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() =>
+                                  copy(
+                                    `bzz://${uploadStatus.reference}`,
+                                    "entry"
+                                  )
+                                }
+                                aria-label="Copy bzz:// URL"
+                              >
+                                {copied === "entry" ? (
+                                  <Check className="size-4" />
+                                ) : (
+                                  <Copy className="size-4" />
+                                )}
+                              </Button>
+                            </div>
+
+                            <p className="text-[0.65rem] text-muted-foreground">
+                              Public gateway (gated):{" "}
+                              <a
+                                href={uploadStatus.bzzUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="underline break-all"
+                              >
+                                {uploadStatus.bzzUrl}
+                              </a>
+                            </p>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-sm text-destructive break-words">
+                        {uploadStatus.message}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
               )}
-              {uploadStatus.kind === "uploading"
-                ? "Uploading…"
-                : "Save & upload"}
-            </Button>
-          </div>
-        </form>
+
+            <div className="flex justify-end gap-2">
+              <Button type="submit" size="lg" variant="outline">
+                Save & download
+              </Button>
+              <Button
+                type="button"
+                size="lg"
+                onClick={handleUpload}
+                disabled={!canUpload}
+                title={!selectedId ? "Pick a stamp above first" : undefined}
+              >
+                {isUploading ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <Upload />
+                )}
+                {uploadStatus.kind === "uploading"
+                  ? "Uploading…"
+                  : "Save & upload"}
+              </Button>
+            </div>
+          </form>
         </section>
 
         {/* RIGHT PHONE PREVIEW */}

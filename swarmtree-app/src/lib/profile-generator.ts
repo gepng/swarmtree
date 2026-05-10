@@ -118,6 +118,7 @@ const TEMPLATE = `<!doctype html>
 <meta name="description" content="{{META_DESC}}">
 <title>{{TITLE}} · Swarmtree</title>
 <style>{{STYLES}}</style>
+<script type="application/json" id="swarmtree-data">{{DATA_JSON}}</script>
 </head>
 <body>
 <main>
@@ -153,6 +154,11 @@ export function generateProfileHtml(profile: Profile): string {
     )
     .join("\n")
 
+  // Embed the structured profile so the editor can round-trip parse it on
+  // re-visit. JSON.stringify escapes </script> automatically when we replace
+  // forward slashes; do that defensively to avoid breaking out of the script tag.
+  const dataJson = JSON.stringify(profile).replace(/</g, "\\u003c")
+
   const values: Record<string, string> = {
     TITLE: title,
     META_DESC: description.replace(/\n/g, " "),
@@ -160,6 +166,7 @@ export function generateProfileHtml(profile: Profile): string {
     ENS_BLOCK: ensBlock,
     LINKS: linksHtml,
     STYLES,
+    DATA_JSON: dataJson,
   }
 
   // Single-pass replace so user-supplied values can never trigger re-substitution.

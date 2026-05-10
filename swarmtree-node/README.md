@@ -20,7 +20,15 @@ swarm-cli status            # wait until Δ blocks behind < ~10
 swarm-cli stamp create      # interactive stamp purchase
 ```
 
-Then in `../swarmtree-app`, `npm run dev`. The Stamp dropdown auto-populates.
+Then in `../swarmtree-app`:
+
+```bash
+npm install
+cp .env.example .env.local    # set VITE_WALLETCONNECT_PROJECT_ID
+npm run dev                   # http://localhost:3000
+```
+
+The Stamp dropdown auto-populates from this node. See `../swarmtree-app/README.md` for full app setup.
 
 ## What each script does
 
