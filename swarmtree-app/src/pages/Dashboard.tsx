@@ -370,7 +370,7 @@ export default function Dashboard() {
           <HexBg className="absolute inset-0 text-foreground/[0.06] pointer-events-none" />
           <div className="relative p-6 flex flex-col h-full gap-6">
             <Link to="/" className="flex items-center gap-2.5">
-              <div className="size-9 rounded-xl bg-gradient-to-br from-primary to-accent shadow-lg shadow-primary/30" />
+              <img src="/favicon.svg" alt="Swarmtree" className="size-9" />
               <span className="font-display text-lg font-semibold tracking-tight">
                 Swarmtree
               </span>
@@ -407,7 +407,7 @@ export default function Dashboard() {
         <section className="px-5 lg:px-10 py-8 lg:py-12 max-w-2xl mx-auto w-full">
           <div className="lg:hidden flex items-center justify-between mb-6">
             <Link to="/" className="flex items-center gap-2">
-              <div className="size-7 rounded-lg bg-gradient-to-br from-primary to-accent" />
+              <img src="/favicon.svg" alt="Swarmtree" className="size-7" />
               <span className="font-display text-base font-semibold">
                 Swarmtree
               </span>

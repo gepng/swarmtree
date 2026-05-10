@@ -36,7 +36,10 @@ export default function Login() {
       <div className="w-full max-w-md flex flex-col gap-6">
         <Card>
           <CardHeader className="text-center">
-            <CardTitle className="text-2xl">Welcome to Swarmtree</CardTitle>
+            <CardTitle className="text-2xl flex items-center justify-center gap-2">
+              <img src="/favicon.svg" alt="" className="size-7" />
+              Welcome to Swarmtree
+            </CardTitle>
             <CardDescription>
               Your links page, hash-addressed and wallet-owned.
             </CardDescription>
