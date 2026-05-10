@@ -13,8 +13,29 @@ export const directory: Record<string, string> = {
   // '0xd8da6bf26964af9d7eed9e03e53415d37aa96045': '<swarm-hash>',
 }
 
+const RUNTIME_KEY = "swarmtree:directory"
+
+function readRuntime(): Record<string, string> {
+  if (typeof window === "undefined") return {}
+  try {
+    return JSON.parse(window.localStorage.getItem(RUNTIME_KEY) || "{}")
+  } catch {
+    return {}
+  }
+}
+
+// Persist a fresh upload so /u/<address> resolves immediately, without rebuilding.
+// Static directory entries are still honored as fallback.
+export function saveProfileHash(address: string, hash: string): void {
+  if (typeof window === "undefined") return
+  const current = readRuntime()
+  current[address.toLowerCase()] = hash
+  window.localStorage.setItem(RUNTIME_KEY, JSON.stringify(current))
+}
+
 export function lookupProfileHash(address: string): string | null {
-  return directory[address.toLowerCase()] ?? null
+  const key = address.toLowerCase()
+  return readRuntime()[key] ?? directory[key] ?? null
 }
 
 export function getGateway(): string {

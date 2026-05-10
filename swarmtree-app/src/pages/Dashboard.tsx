@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import type { FormEvent } from "react"
+import { Link } from "react-router-dom"
 import { ConnectButton } from "@rainbow-me/rainbowkit"
 import { useAccount, useEnsName, useReadContract } from "wagmi"
 import { mainnet } from "wagmi/chains"
@@ -34,12 +35,14 @@ import {
   downloadHtml,
   generateProfileHtml,
 } from "@/lib/profile-generator"
+import { saveProfileHash } from "@/lib/directory"
 import { uploadProfileFolder } from "@/lib/upload"
 import { useStamp } from "@/hooks/useStamp"
+import { HexBg } from "@/components/HexBg"
+import { PhonePreview } from "@/components/PhonePreview"
 
 type UploadStatus =
   | { kind: "idle" }
-  | { kind: "signing" }
   | { kind: "uploading" }
   | { kind: "success"; reference: string; bzzUrl: string }
   | { kind: "error"; message: string }
@@ -208,6 +211,7 @@ export default function Dashboard() {
         uploadUrl: SWARM_UPLOAD_URL,
         readUrl: SWARM_READ_URL,
       })
+      saveProfileHash(address, result.reference)
       setUploadStatus({
         kind: "success",
         reference: result.reference,
@@ -234,31 +238,111 @@ export default function Dashboard() {
   const isUploading = uploadStatus.kind === "uploading"
   const canUpload = !!batchId && !!address && !isUploading
 
+  // Live-preview profile: fall back to friendly placeholders so the phone never
+  // looks empty, and show pending-but-unverified ENS so users see their handle
+  // immediately as they type.
+  const filledLinks = links
+    .filter((l) => l.label.trim() || l.url.trim())
+    .map((l) => ({ label: l.label || "Link", url: l.url || "#" }))
+  const previewProfile: Profile = {
+    version: 1,
+    address,
+    ens: verifiedEns ?? (ensInput.trim() ? ensInput.trim() : null),
+    title: title.trim() || "Your name",
+    description: description.trim() || "Add a short bio to your Swarmtree.",
+    links:
+      filledLinks.length > 0
+        ? filledLinks
+        : [
+            { label: "Add your first link →", url: "#" },
+            { label: "And another", url: "#" },
+          ],
+  }
+
+  const statusLabel =
+    uploadStatus.kind === "uploading"
+      ? "Uploading…"
+      : uploadStatus.kind === "success"
+        ? `Live · ${uploadStatus.reference.slice(0, 8)}…`
+        : uploadStatus.kind === "error"
+          ? "Upload failed"
+          : "Draft"
+  const statusTone: "idle" | "uploading" | "success" | "error" =
+    uploadStatus.kind
+
   const showVerified = verifiedEns && pendingVerify === verifiedEns
   const showFailed =
     pendingVerify && !isVerifying && pendingVerify !== verifiedEns
 
   return (
-    <main className="min-h-svh bg-background">
-      <header className="border-b">
-        <div className="mx-auto max-w-3xl flex items-center justify-between px-4 py-3">
-          <span className="font-semibold">Swarmtree</span>
-          <ConnectButton showBalance={false} chainStatus="icon" />
-        </div>
-      </header>
+    <main className="min-h-svh bg-background text-foreground">
+      <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr_420px] min-h-svh">
+        {/* LEFT RAIL */}
+        <aside className="hidden lg:flex flex-col border-r border-border relative overflow-hidden">
+          <HexBg className="absolute inset-0 text-foreground/[0.06] pointer-events-none" />
+          <div className="relative p-6 flex flex-col h-full gap-6">
+            <Link to="/" className="flex items-center gap-2.5">
+              <div className="size-9 rounded-xl bg-gradient-to-br from-primary to-accent shadow-lg shadow-primary/30" />
+              <span className="font-display text-lg font-semibold tracking-tight">
+                Swarmtree
+              </span>
+            </Link>
 
-      <div className="mx-auto max-w-3xl px-4 py-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Edit your profile</h1>
-          <p className="text-sm text-muted-foreground">
-            <strong>Save &amp; upload</strong> sends your page to Swarm via
-            Beeport's open-source proxy.{" "}
-            <strong>Save &amp; download</strong> just gives you the{" "}
-            <code className="text-xs">index.html</code> for manual upload.
-          </p>
-        </div>
+            <nav className="flex flex-col gap-1 mt-2">
+              <span className="px-3.5 py-2 rounded-full bg-secondary text-secondary-foreground text-sm font-medium">
+                Profile
+              </span>
+              <span className="px-3.5 py-2 rounded-full text-muted-foreground text-sm">
+                Design <span className="opacity-60">· soon</span>
+              </span>
+              <span className="px-3.5 py-2 rounded-full text-muted-foreground text-sm">
+                Settings <span className="opacity-60">· soon</span>
+              </span>
+            </nav>
 
-        <form onSubmit={handleSave} className="flex flex-col gap-6">
+            <div className="flex-1" />
+
+            <div className="space-y-3">
+              <p className="text-[0.65rem] text-muted-foreground uppercase tracking-[0.15em]">
+                Wallet
+              </p>
+              <ConnectButton
+                showBalance={false}
+                chainStatus="icon"
+                accountStatus="avatar"
+              />
+            </div>
+          </div>
+        </aside>
+
+        {/* CENTER EDITOR */}
+        <section className="px-5 lg:px-10 py-8 lg:py-12 max-w-2xl mx-auto w-full">
+          <div className="lg:hidden flex items-center justify-between mb-6">
+            <Link to="/" className="flex items-center gap-2">
+              <div className="size-7 rounded-lg bg-gradient-to-br from-primary to-accent" />
+              <span className="font-display text-base font-semibold">
+                Swarmtree
+              </span>
+            </Link>
+            <ConnectButton
+              showBalance={false}
+              chainStatus="icon"
+              accountStatus="avatar"
+            />
+          </div>
+
+          <div className="mb-8">
+            <h1 className="font-display text-3xl lg:text-4xl font-semibold">
+              Edit your profile
+            </h1>
+            <p className="text-sm text-muted-foreground mt-2 max-w-md">
+              <strong>Save &amp; upload</strong> publishes directly to Swarm.{" "}
+              <strong>Save &amp; download</strong> exports the{" "}
+              <code className="text-xs">index.html</code> for manual upload.
+            </p>
+          </div>
+
+          <form onSubmit={handleSave} className="flex flex-col gap-6">
           <Card>
             <CardHeader>
               <CardTitle>Stamp settings</CardTitle>
@@ -473,47 +557,42 @@ export default function Dashboard() {
                     </div>
                     <div>
                       <Label>Live URL</Label>
-                      <a
-                        href={uploadStatus.bzzUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block text-sm underline break-all mt-1"
-                      >
-                        {uploadStatus.bzzUrl}
-                      </a>
-                    </div>
-                    {address && (
-                      <div>
-                        <Label>
-                          Paste into{" "}
-                          <code className="text-xs">src/lib/directory.ts</code>
-                        </Label>
-                        <div className="flex items-center gap-2 mt-1">
-                          <code className="flex-1 text-xs font-mono bg-muted px-2 py-1.5 rounded break-all">
-                            "{address.toLowerCase()}": "
-                            {uploadStatus.reference}",
-                          </code>
+                      <div className="mt-1 flex flex-col gap-2">
+                        <a
+                          href={uploadStatus.bzzUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
                           <Button
                             type="button"
-                            variant="outline"
-                            size="icon"
-                            onClick={() =>
-                              copy(
-                                `"${address.toLowerCase()}": "${uploadStatus.reference}",`,
-                                "entry"
-                              )
-                            }
-                            aria-label="Copy directory entry"
+                            variant="default"
+                            className="w-full"
                           >
-                            {copied === "entry" ? (
-                              <Check className="size-4" />
-                            ) : (
-                              <Copy className="size-4" />
-                            )}
+                            <ExternalLink />
+                            View page on Swarm
                           </Button>
-                        </div>
+                        </a>
+                        <a
+                          href={uploadStatus.bzzUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-muted-foreground underline break-all"
+                        >
+                          {uploadStatus.bzzUrl}
+                        </a>
+                        {address && (
+                          <Link
+                            to={`/u/${address.toLowerCase()}`}
+                            className="text-xs text-muted-foreground"
+                          >
+                            Or via the in-app route:{" "}
+                            <code className="underline">
+                              /u/{address.toLowerCase().slice(0, 10)}…
+                            </code>
+                          </Link>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </>
                 ) : (
                   <p className="text-sm text-destructive break-words">
@@ -546,6 +625,19 @@ export default function Dashboard() {
             </Button>
           </div>
         </form>
+        </section>
+
+        {/* RIGHT PHONE PREVIEW */}
+        <aside className="hidden lg:flex flex-col border-l border-border relative overflow-hidden bg-secondary/30">
+          <HexBg className="absolute inset-0 text-foreground/[0.06] pointer-events-none" />
+          <div className="relative flex-1 flex flex-col items-center justify-center p-6">
+            <PhonePreview
+              profile={previewProfile}
+              statusLabel={statusLabel}
+              statusTone={statusTone}
+            />
+          </div>
+        </aside>
       </div>
     </main>
   )
