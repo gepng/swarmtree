@@ -1,13 +1,16 @@
+import { Bee } from "@ethersphere/bee-js"
+
 export interface UploadResult {
   reference: string
   bzzUrl: string
+  localBzzUrl: string
 }
 
 export interface UploadParams {
   html: string
   batchId: string
-  uploadUrl: string
-  readUrl: string
+  beeUrl: string
+  publicGatewayUrl: string
 }
 
 const HEX_64 = /^[0-9a-fA-F]{64}$/
@@ -22,50 +25,35 @@ function normalizeBatchId(input: string): string {
   return stripped
 }
 
-// Posts a single index.html as a Swarm collection directly to the public Swarm
-// gateway. The gateway's underlying Bee node accepts uploads against any batch
-// ID it has seen — no wallet signature or proxy required (CORS is wildcarded).
-// Reads of the resulting HTML happen via download.gateway.ethswarm.org because
-// api.gateway redirects HTML uploads to a "forbidden" page (phishing protection).
+// Uploads a single index.html as a Swarm collection through the user's local
+// Bee light node (default http://localhost:1633). Returns both the public
+// gateway URL (shareable) and the local Bee URL (instant verify on the user's
+// machine, only works while their Bee is running).
+//
+// Bee CORS requirement: the node must be started with
+//   bee start --cors-allowed-origins "http://localhost:3000"
+// otherwise the browser fetch is blocked.
 export async function uploadProfileFolder(
   p: UploadParams
 ): Promise<UploadResult> {
   const batchId = normalizeBatchId(p.batchId)
 
-  const formData = new FormData()
-  formData.append(
-    "file",
-    new Blob([p.html], { type: "text/html" }),
-    "index.html"
-  )
+  const bee = new Bee(p.beeUrl)
+  const file = new File([p.html], "index.html", { type: "text/html" })
 
-  const res = await fetch(`${p.uploadUrl.replace(/\/$/, "")}/bzz`, {
-    method: "POST",
-    headers: {
-      "swarm-postage-batch-id": batchId,
-      "swarm-collection": "true",
-      "swarm-index-document": "index.html",
-      // Wait for chunks to propagate so the hash is immediately resolvable.
-      "swarm-deferred-upload": "false",
-    },
-    body: formData,
+  const result = await bee.uploadFiles(batchId, [file], {
+    indexDocument: "index.html",
+    // Wait for chunks to propagate so the public-gateway URL works immediately.
+    deferred: false,
   })
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => "")
-    throw new Error(
-      `Upload failed (${res.status} ${res.statusText})${body ? `: ${body}` : ""}`
-    )
-  }
+  const reference = result.reference.toHex()
+  const beeBase = p.beeUrl.replace(/\/$/, "")
+  const gwBase = p.publicGatewayUrl.replace(/\/$/, "")
 
-  const data = (await res.json()) as { reference?: string }
-  if (!data.reference) {
-    throw new Error("Upload succeeded but response had no reference field")
-  }
-
-  const readBase = p.readUrl.replace(/\/$/, "")
   return {
-    reference: data.reference,
-    bzzUrl: `${readBase}/bzz/${data.reference}/`,
+    reference,
+    bzzUrl: `${gwBase}/bzz/${reference}/`,
+    localBzzUrl: `${beeBase}/bzz/${reference}/`,
   }
 }

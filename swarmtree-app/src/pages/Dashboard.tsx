@@ -2,7 +2,13 @@ import { useEffect, useState } from "react"
 import type { FormEvent } from "react"
 import { Link } from "react-router-dom"
 import { ConnectButton } from "@rainbow-me/rainbowkit"
-import { useAccount, useEnsName, useReadContract } from "wagmi"
+import {
+  useAccount,
+  useEnsName,
+  useReadContract,
+  useWaitForTransactionReceipt,
+  useWriteContract,
+} from "wagmi"
 import { mainnet } from "wagmi/chains"
 import { namehash } from "viem"
 import {
@@ -11,6 +17,7 @@ import {
   ExternalLink,
   Loader2,
   Plus,
+  RefreshCw,
   Trash2,
   Upload,
   X,
@@ -18,7 +25,9 @@ import {
 
 import { ensRegistryAbi } from "@/abi/ensRegistry"
 import { nameWrapperAbi } from "@/abi/nameWrapper"
+import { publicResolverAbi } from "@/abi/publicResolver"
 import { ENS_REGISTRY, NAME_WRAPPER, ZERO_ADDRESS } from "@/lib/addresses"
+import { encodeBzzContenthash } from "@/lib/contenthash"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -37,21 +46,27 @@ import {
 } from "@/lib/profile-generator"
 import { saveProfileHash } from "@/lib/directory"
 import { uploadProfileFolder } from "@/lib/upload"
-import { useStamp } from "@/hooks/useStamp"
+import { useStamps } from "@/hooks/useStamp"
 import { HexBg } from "@/components/HexBg"
 import { PhonePreview } from "@/components/PhonePreview"
 
 type UploadStatus =
   | { kind: "idle" }
   | { kind: "uploading" }
-  | { kind: "success"; reference: string; bzzUrl: string }
+  | {
+      kind: "success"
+      reference: string
+      bzzUrl: string
+      localBzzUrl: string
+    }
   | { kind: "error"; message: string }
 
-// api.gateway.ethswarm.org accepts uploads with wildcard CORS and any batch ID.
-const SWARM_UPLOAD_URL =
-  import.meta.env.VITE_SWARM_UPLOAD_URL || "https://api.gateway.ethswarm.org"
-// download.gateway.ethswarm.org serves HTML (api.gateway redirects HTML to a
-// "forbidden" page for phishing protection).
+// Local Bee light node — uploads + stamp listing go here. Bee must be started
+// with --cors-allowed-origins "http://localhost:3000" for the browser fetch to work.
+const BEE_API_URL =
+  import.meta.env.VITE_BEE_API_URL || "http://localhost:1633"
+// Shareable public-gateway URL (download.gateway serves HTML; api.gateway
+// redirects HTML to a "forbidden" page for phishing protection).
 const SWARM_READ_URL =
   import.meta.env.VITE_SWARM_READ_URL || "https://download.gateway.ethswarm.org"
 
@@ -176,7 +191,14 @@ export default function Dashboard() {
     setLinks((prev) => [...prev, newLink()])
   }
 
-  const { batchId, setBatchId } = useStamp()
+  const {
+    stamps,
+    loading: stampsLoading,
+    error: stampsError,
+    selectedId,
+    setSelectedId,
+    refetch: refetchStamps,
+  } = useStamps(BEE_API_URL)
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>({
     kind: "idle",
   })
@@ -201,21 +223,22 @@ export default function Dashboard() {
   }
 
   async function handleUpload() {
-    if (!address || !batchId) return
+    if (!address || !selectedId) return
     setUploadStatus({ kind: "uploading" })
     try {
       const html = generateProfileHtml(buildProfile())
       const result = await uploadProfileFolder({
         html,
-        batchId,
-        uploadUrl: SWARM_UPLOAD_URL,
-        readUrl: SWARM_READ_URL,
+        batchId: selectedId,
+        beeUrl: BEE_API_URL,
+        publicGatewayUrl: SWARM_READ_URL,
       })
       saveProfileHash(address, result.reference)
       setUploadStatus({
         kind: "success",
         reference: result.reference,
         bzzUrl: result.bzzUrl,
+        localBzzUrl: result.localBzzUrl,
       })
     } catch (err) {
       setUploadStatus({
@@ -236,7 +259,72 @@ export default function Dashboard() {
   }
 
   const isUploading = uploadStatus.kind === "uploading"
-  const canUpload = !!batchId && !!address && !isUploading
+  const canUpload = !!selectedId && !!address && !isUploading
+
+  // ENS contenthash publish flow ----------------------------------------------
+  // Reads the resolver currently registered for verifiedEns from the ENS
+  // Registry, then writes setContenthash(node, bzz://<hash>) on it.
+  const verifiedNode = verifiedEns ? namehash(verifiedEns) : undefined
+  const { data: resolverAddress } = useReadContract({
+    address: ENS_REGISTRY,
+    abi: ensRegistryAbi,
+    functionName: "resolver",
+    args: verifiedNode ? [verifiedNode] : undefined,
+    chainId: mainnet.id,
+    query: { enabled: !!verifiedNode },
+  })
+
+  const {
+    writeContractAsync,
+    data: publishTxHash,
+    isPending: isPublishing,
+    error: publishWriteError,
+    reset: resetPublish,
+  } = useWriteContract()
+  const {
+    isLoading: isPublishConfirming,
+    isSuccess: isPublishConfirmed,
+    error: publishConfirmError,
+  } = useWaitForTransactionReceipt({
+    hash: publishTxHash,
+    chainId: mainnet.id,
+  })
+
+  // Reset publish state when a fresh upload happens.
+  useEffect(() => {
+    if (uploadStatus.kind === "success") resetPublish()
+    // Intentionally only depend on the new hash so we don't loop while
+    // upload is in flight.
+  }, [
+    uploadStatus.kind === "success" ? uploadStatus.reference : null,
+    resetPublish,
+  ])
+
+  async function handlePublishEns() {
+    if (uploadStatus.kind !== "success") return
+    if (!verifiedNode || !resolverAddress) return
+    if (resolverAddress.toLowerCase() === ZERO_ADDRESS) return
+    try {
+      await writeContractAsync({
+        address: resolverAddress,
+        abi: publicResolverAbi,
+        functionName: "setContenthash",
+        args: [verifiedNode, encodeBzzContenthash(uploadStatus.reference)],
+        chainId: mainnet.id,
+      })
+    } catch {
+      /* error surfaces via publishWriteError */
+    }
+  }
+
+  const publishError = publishWriteError ?? publishConfirmError
+  const canPublish =
+    uploadStatus.kind === "success" &&
+    !!verifiedEns &&
+    !!resolverAddress &&
+    resolverAddress.toLowerCase() !== ZERO_ADDRESS &&
+    !isPublishing &&
+    !isPublishConfirming
 
   // Live-preview profile: fall back to friendly placeholders so the phone never
   // looks empty, and show pending-but-unverified ENS so users see their handle
@@ -344,37 +432,84 @@ export default function Dashboard() {
 
           <form onSubmit={handleSave} className="flex flex-col gap-6">
           <Card>
-            <CardHeader>
-              <CardTitle>Stamp settings</CardTitle>
-              <CardDescription>
-                Paste your Beeport postage batch ID. You bought this when you
-                purchased storage on Beeport — it authorizes uploads from your
-                wallet. Stored locally only.
-              </CardDescription>
+            <CardHeader className="flex flex-row items-start justify-between gap-4">
+              <div className="flex-1">
+                <CardTitle>Postage stamp</CardTitle>
+                <CardDescription>
+                  Pulled live from your Bee node at{" "}
+                  <code className="text-xs">{BEE_API_URL}</code>. The chosen
+                  stamp authorizes the upload.
+                </CardDescription>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={refetchStamps}
+                disabled={stampsLoading}
+                aria-label="Refresh stamps"
+                title="Refresh stamps"
+              >
+                <RefreshCw
+                  className={stampsLoading ? "animate-spin" : undefined}
+                />
+              </Button>
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
-              <Label htmlFor="batchId">Postage batch ID</Label>
-              <Input
-                id="batchId"
-                placeholder="64-char hex (with or without 0x prefix)"
-                value={batchId}
-                onChange={(e) => setBatchId(e.target.value)}
-                autoComplete="off"
-                className="font-mono text-xs"
-              />
-              <p className="text-xs text-muted-foreground">
-                Don't have one? Buy a stamp at{" "}
-                <a
-                  href="https://beeport.ethswarm.org"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline inline-flex items-center gap-1"
-                >
-                  beeport.ethswarm.org
-                  <ExternalLink className="size-3" />
-                </a>
-                , then copy the batch ID from the History tab.
-              </p>
+              {stampsLoading ? (
+                <p className="text-sm text-muted-foreground inline-flex items-center gap-2">
+                  <Loader2 className="size-4 animate-spin" />
+                  Loading stamps from your Bee…
+                </p>
+              ) : stampsError ? (
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm text-destructive">
+                    Couldn't reach Bee at{" "}
+                    <code className="text-xs">{BEE_API_URL}</code>.
+                  </p>
+                  <p className="text-xs text-muted-foreground break-words">
+                    {stampsError}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Make sure your node is running and started with{" "}
+                    <code className="text-xs">
+                      --cors-allowed-origins "http://localhost:3000"
+                    </code>
+                    .
+                  </p>
+                </div>
+              ) : stamps.length === 0 ? (
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm">No usable postage stamps yet.</p>
+                  <p className="text-xs text-muted-foreground">
+                    Buy one from a terminal:{" "}
+                    <code className="text-xs">swarm-cli stamp create</code>,
+                    then click refresh.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <Label htmlFor="batchId">Stamp</Label>
+                  <select
+                    id="batchId"
+                    value={selectedId}
+                    onChange={(e) => setSelectedId(e.target.value)}
+                    className="font-mono text-xs h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] cursor-pointer"
+                  >
+                    {stamps.map((s) => (
+                      <option key={s.batchId} value={s.batchId}>
+                        {s.label} · {s.usageText} used · depth {s.depth} ·{" "}
+                        {s.batchId.slice(0, 10)}…
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    {stamps.length} usable stamp{stamps.length === 1 ? "" : "s"}{" "}
+                    available. New stamp:{" "}
+                    <code className="text-xs">swarm-cli stamp create</code>.
+                  </p>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -556,10 +691,10 @@ export default function Dashboard() {
                       </div>
                     </div>
                     <div>
-                      <Label>Live URL</Label>
+                      <Label>View on your local Bee</Label>
                       <div className="mt-1 flex flex-col gap-2">
                         <a
-                          href={uploadStatus.bzzUrl}
+                          href={uploadStatus.localBzzUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                         >
@@ -569,26 +704,153 @@ export default function Dashboard() {
                             className="w-full"
                           >
                             <ExternalLink />
-                            View page on Swarm
+                            View page (your Bee)
                           </Button>
                         </a>
                         <a
-                          href={uploadStatus.bzzUrl}
+                          href={uploadStatus.localBzzUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-xs text-muted-foreground underline break-all"
                         >
-                          {uploadStatus.bzzUrl}
+                          {uploadStatus.localBzzUrl}
                         </a>
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Make it public via ENS</Label>
+                      <div className="mt-1 flex flex-col gap-3">
+                        {verifiedEns ? (
+                          <>
+                            <p className="text-xs text-muted-foreground">
+                              Sets the Content Hash record on{" "}
+                              <code className="text-[0.65rem]">
+                                {verifiedEns}
+                              </code>{" "}
+                              so the page lives at{" "}
+                              <code className="text-[0.65rem]">
+                                {verifiedEns}.limo
+                              </code>
+                              . One Ethereum mainnet tx (you'll pay ETH gas).
+                            </p>
+                            {isPublishConfirmed ? (
+                              <a
+                                href={`https://${verifiedEns}.limo/`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <Button
+                                  type="button"
+                                  variant="default"
+                                  className="w-full"
+                                >
+                                  <ExternalLink />
+                                  Open {verifiedEns}.limo
+                                </Button>
+                              </a>
+                            ) : (
+                              <Button
+                                type="button"
+                                variant="accent"
+                                onClick={handlePublishEns}
+                                disabled={!canPublish}
+                                className="w-full"
+                              >
+                                {isPublishing ? (
+                                  <>
+                                    <Loader2 className="animate-spin" />
+                                    Confirm in wallet…
+                                  </>
+                                ) : isPublishConfirming ? (
+                                  <>
+                                    <Loader2 className="animate-spin" />
+                                    Publishing on-chain…
+                                  </>
+                                ) : (
+                                  <>Publish to {verifiedEns}</>
+                                )}
+                              </Button>
+                            )}
+                            {publishTxHash && !isPublishConfirmed && (
+                              <a
+                                href={`https://etherscan.io/tx/${publishTxHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[0.7rem] text-muted-foreground underline"
+                              >
+                                View tx on Etherscan
+                              </a>
+                            )}
+                            {publishError && (
+                              <p className="text-xs text-destructive break-words">
+                                {publishError instanceof Error
+                                  ? publishError.message
+                                  : String(publishError)}
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Verify an ENS name above to enable one-click
+                            publishing. Or paste{" "}
+                            <code className="text-[0.65rem]">
+                              bzz://{uploadStatus.reference}
+                            </code>{" "}
+                            into your name's Content Hash record at
+                            app.ens.domains.
+                          </p>
+                        )}
+
+                        <div className="flex items-center gap-2">
+                          <code className="flex-1 text-xs font-mono bg-muted px-2 py-1.5 rounded break-all">
+                            bzz://{uploadStatus.reference}
+                          </code>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() =>
+                              copy(
+                                `bzz://${uploadStatus.reference}`,
+                                "entry"
+                              )
+                            }
+                            aria-label="Copy bzz:// URL"
+                          >
+                            {copied === "entry" ? (
+                              <Check className="size-4" />
+                            ) : (
+                              <Copy className="size-4" />
+                            )}
+                          </Button>
+                        </div>
+
+                        <p className="text-[0.65rem] text-muted-foreground">
+                          Public gateway (gated):{" "}
+                          <a
+                            href={uploadStatus.bzzUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline break-all"
+                          >
+                            {uploadStatus.bzzUrl}
+                          </a>
+                        </p>
+                      </div>
+                    </div>
+                    <div>
+                      <Label>In-app route</Label>
+                      <div className="mt-1 flex flex-col gap-1">
                         {address && (
                           <Link
                             to={`/u/${address.toLowerCase()}`}
                             className="text-xs text-muted-foreground"
                           >
-                            Or via the in-app route:{" "}
                             <code className="underline">
                               /u/{address.toLowerCase().slice(0, 10)}…
-                            </code>
+                            </code>{" "}
+                            (redirects to public URL — same gate as above
+                            applies)
                           </Link>
                         )}
                       </div>
@@ -612,7 +874,7 @@ export default function Dashboard() {
               size="lg"
               onClick={handleUpload}
               disabled={!canUpload}
-              title={!batchId ? "Add your batch ID above first" : undefined}
+              title={!selectedId ? "Pick a stamp above first" : undefined}
             >
               {isUploading ? (
                 <Loader2 className="animate-spin" />
@@ -628,9 +890,9 @@ export default function Dashboard() {
         </section>
 
         {/* RIGHT PHONE PREVIEW */}
-        <aside className="hidden lg:flex flex-col border-l border-border relative overflow-hidden bg-secondary/30">
+        <aside className="hidden lg:flex flex-col border-l border-border relative bg-secondary/30">
           <HexBg className="absolute inset-0 text-foreground/[0.06] pointer-events-none" />
-          <div className="relative flex-1 flex flex-col items-center justify-center p-6">
+          <div className="sticky top-0 h-svh flex flex-col items-center justify-center p-6">
             <PhonePreview
               profile={previewProfile}
               statusLabel={statusLabel}

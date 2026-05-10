@@ -1,118 +1,123 @@
-# Swarmtree — Programmatic Upload (PRD addendum)
+# Swarmtree — Programmatic Upload (PRD addendum, v2)
 
-Replaces the manual "Save & download → drag into Beeport" flow with a one-click in-app upload that produces a Swarm hash and a live bzz URL. Companion to `PRD.md`; do not re-state the v1 architecture, only the new upload feature.
+**Architectural pivot (2026-05-10):** v1 of this PRD piggybacked on Beeport's hosted gateway. We've moved to running our own **local Bee light node**, which is the documented, supported path and removes our dependency on Beeport's infrastructure.
 
-## 1. Goal
+This addendum describes the live shape; supersedes everything in v1 about gateways, custom auth headers, and CORS proxies.
 
-User clicks **Save & upload** in the editor → 5 seconds later sees their live `bzz://<hash>` URL, with the page rendered and shareable. Zero file downloads. Zero context switches to Beeport's UI.
+## 1. Goal (unchanged)
 
-## 2. Why this is reachable without our own Bee node
+User clicks **Save & upload** in the editor → ~5 seconds later sees their live `bzz://<hash>` URL, with the page rendered and shareable.
 
-Beeport (open-source) consists of a Next.js frontend + an Express proxy + a Bee node, all run by the Swarm Foundation at `beeport.ethswarm.org` (frontend) and `swarming.site` (backend).
+## 2. Why local Bee
 
-Their backend exposes `POST /bzz` with a wallet-signature auth scheme:
-- Verifies the wallet signed `${fileName}:${batchId}`
-- Verifies via on-chain registry (`0x5EBfBeFB1E88391eFb022d5d33302f50a46bF4f3` on Gnosis) that the wallet paid for that batch
-- Proxies authorized uploads to their own Bee node
+- **Documented**: matches `https://docs.ethswarm.org/docs/develop/host-your-website/` exactly. No reverse engineering.
+- **Reliable**: no dependence on a third-party hosted Bee whose CORS, API shape, or uptime can change.
+- **Real ownership**: stamps you buy belong to your wallet on Gnosis Chain and live on a Bee you control.
+- **Same Bee handles reads + writes**: instant verification at `localhost:1633/bzz/<hash>/` even before public-gateway propagation.
+- **Drops a lot of code**: no wallet signature for upload, no proxy backend, no custom Beeport auth headers.
 
-We piggyback on this: we already have wallet connect (wagmi) and we can hit their public backend with the right headers from a CORS-allowed origin. The user's batch (already purchased earlier via the Beeport UI) authorizes uploads.
+Trade-off: developer friction (install Bee, fund with xBZZ + xDAI, run swap mode). Worth it for a project that's at all serious about Swarm.
 
-## 3. Scope
+## 3. Bee setup (developer prerequisite)
 
-### In v1 of the upload feature
-- **Stamp settings**: text input for the user's batch ID, persisted to `localStorage` so they paste once
-- **Save & upload button**: alongside the existing Save & download (which stays as a fallback)
-- **Upload pipeline**: wallet sign → multipart POST → display returned hash + bzz URL
-- **Inline result card**: copy-button for hash, link to `bzz://<hash>/`, "Copy directory entry" snippet to paste into `directory.ts`
-- **Dev port = 3000**: Vite runs on `localhost:3000` so Beeport's CORS allowlist accepts our origin (default 5173 is not in their list)
+```bash
+# Install (latest tag from https://github.com/ethersphere/bee/releases/latest)
+curl -s https://raw.githubusercontent.com/ethersphere/bee/master/install.sh | TAG=<TAG> sudo bash
 
-### Explicitly out of scope (deferred)
-- Buying stamps from inside our SPA — user keeps using Beeport's UI for that one-time setup
-- Auto-discovery of the user's batches by reading registry events — manual paste is fine for v1; nice-to-have for v2
-- Production deployment behind `swarmtree.eth.limo` — Beeport's CORS will reject it. Mitigations live in §6
-- Running our own backend proxy
-- Tar-archive uploads — multipart/form-data is enough for our single-file folder
+# Install swarm-cli for stamp management
+npm install -g @ethersphere/swarm-cli
 
-## 4. Technical approach
+# Run in light mode with CORS open to the dev origin
+bee start \
+  --password <PASSWORD> \
+  --swap-enable \
+  --api-addr 127.0.0.1:1633 \
+  --cors-allowed-origins "http://localhost:3000" \
+  --blockchain-rpc-endpoint https://xdai.fairdatasociety.org
 
-### 4.1 Upload request shape
+# Wait until `swarm-cli status` shows Δ < 10 blocks (light-node sync)
 
-```
-POST https://swarming.site/bzz
-Headers:
-  swarm-postage-batch-id: <user's batch ID>
-  swarm-collection: true
-  swarm-index-document: index.html
-  x-uploader-address: <connected wallet, lowercase 0x...>
-  x-upload-signed-message: <wallet signature of `index.html:<batchId>`>
-  x-message-content: index.html:<batchId>
-  x-file-name: index.html
-Body: multipart/form-data with one part
-  name="file" filename="index.html" type="text/html"
-  body: generated HTML string
+# Buy a stamp (interactive — picks capacity + TTL)
+swarm-cli stamp create
 ```
 
-Browser sets `Content-Type: multipart/form-data; boundary=...` automatically when we use `FormData`.
+Funding the node: ~0.01 xDAI + ~0.2 xBZZ to the wallet shown by `swarm-cli addresses` on Gnosis Chain (use https://fund.ethswarm.org for one-step multichain top-up). Full setup walkthrough lives in the project's `setup-bee` skill.
 
-Returned 201 with JSON `{ reference: "<64-char hex>" }`. That's the manifest hash for the folder containing `index.html`.
+For production / shipped app: deploy a Bee node on a small VPS with the SPA's deployed origin in `--cors-allowed-origins`, OR have each user run their own node and configure `VITE_BEE_API_URL` to point at it.
 
-### 4.2 Files
-
-```
-src/lib/upload.ts          ← uploadProfileFolder(html, batchId, address, signMsg) → hash
-src/hooks/useStamp.ts      ← localStorage-backed batch ID hook (get/set/clear)
-src/pages/Dashboard.tsx    ← stamp settings card + Save & upload button + result card
-package.json               ← "dev": "vite --port 3000 --strictPort"
-.env.example               ← VITE_BEEPORT_BACKEND_URL=https://swarming.site
-src/lib/wagmi.ts (no change) — useSignMessage works with existing wallet config
-```
-
-### 4.3 UX state machine for the upload button
+## 4. Code architecture
 
 ```
-idle → click → signing (wallet popup) → uploading (spinner) → success (show hash + URL)
-                                                            → error (show message, retry)
+src/lib/upload.ts            — uploadProfileFolder({ html, batchId, beeUrl, publicGatewayUrl })
+                                Uses bee-js: bee.uploadFiles(batchId, [file],
+                                { indexDocument: "index.html", deferred: false })
+                                Returns { reference, bzzUrl, localBzzUrl }
+
+src/hooks/useStamp.ts        — useStamps(beeUrl): returns { stamps, loading, error,
+                                selectedId, setSelectedId, refetch }
+                                Calls bee.getPostageBatches() to populate dropdown.
+                                Persists chosen batch in localStorage.
+
+src/lib/swarm.ts             — bzzUrl(hash): builds public-gateway URL for sharing
+src/lib/directory.ts         — saveProfileHash, lookupProfileHash, getGateway
+                                (defaults to download.gateway.ethswarm.org)
+
+src/pages/Dashboard.tsx      — Stamp settings card now shows a live dropdown
+                                of usable stamps from the local Bee, with
+                                loading / error / empty states. No more paste box.
+
+.env.example                 — VITE_BEE_API_URL=http://localhost:1633
+                                VITE_SWARM_READ_URL=https://download.gateway.ethswarm.org
 ```
 
-If no `batchId` set: button is disabled with hint "Add your Beeport batch ID first." Stamp settings card is always above the form.
+## 5. Two URLs per upload
 
-### 4.4 What we don't import
+`uploadProfileFolder` returns both:
 
-No bee-js. We just removed it and the upload is one `fetch` call — no need to re-add ~70 KB of SDK.
+- **`bzzUrl`** — public gateway (`download.gateway.ethswarm.org/bzz/<hash>/`). Shareable. Works after chunks propagate (we use `deferred: false` so this is immediate). This is what we display + put in `directory.ts` for `/u/:identifier` redirects.
+- **`localBzzUrl`** — local Bee (`localhost:1633/bzz/<hash>/`). Only works on the user's machine while their Bee is running. Useful for instant verification during dev. Currently unused in the UI; available for future "verify locally" affordance.
 
-## 5. Success criteria
+## 6. Stamp UX
 
-- [ ] User pastes batch ID once → persisted across reloads
-- [ ] Clicking Save & upload triggers exactly one wallet signature prompt
-- [ ] On success the hash appears within 10 seconds of clicking
-- [ ] The displayed `bzz://<hash>/` URL loads the standalone Linktree page in a new tab
-- [ ] After upload, user sees a one-line code snippet they can paste into `directory.ts`
-- [ ] All of the above works on `http://localhost:3000` (CORS-allowed origin)
+The Stamp settings card renders one of four states:
 
-If those six pass, the feature is done.
-
-## 6. Risks and mitigations
-
-| Risk | Severity | Mitigation |
+| State | Trigger | UI |
 |---|---|---|
-| Beeport changes their auth headers or shuts down `swarming.site` | High but rare | We pin the auth shape; if it breaks the Save & download fallback still works |
-| CORS rejects our prod origin (`swarmtree.eth.limo`) | Certain at deploy time | For demo: deploy our SPA via Beeport itself (`*.eth.limo` is not in their allowlist either, but `beeport.eth.limo` is — we'd need them to add our domain, OR demo from `localhost:3000`, OR run a tiny proxy of their backend on a domain we add to the allowlist of OUR proxy) |
-| Wallet signature UX feels heavy ("sign every save") | Medium | Beeport's backend supports session tokens (`x-multi-file-upload`) — defer to v2 if it's annoying |
-| Batch expires mid-demo | Low | Show stamp expiry warning if we can read batch TTL; fallback: user re-buys via Beeport |
-| User has no batch yet | High at first run | Stamp settings card has a "Get one at Beeport ↗" link |
+| Loading | Initial fetch | Spinner + "Loading stamps from your Bee…" |
+| Error | Bee unreachable / CORS rejected | Red error + the message + reminder about `--cors-allowed-origins` |
+| Empty | Bee reachable, zero usable stamps | Hint: `swarm-cli stamp create` |
+| Stamps | ≥1 usable stamp | `<select>` dropdown with label + usage% + depth + first-10-chars of batch ID |
 
-## 7. Open questions (non-blocking)
+Refresh button (`RefreshCw` icon) re-runs `getPostageBatches()` without a full page reload.
 
-- Do we want to detect the user's batches automatically by watching the registry contract for `BatchPaid(payer)` events? Adds polish but not required for v1
-- Should success state offer to set ENS contenthash automatically (one tx)? Out of scope for this addendum but a strong v2 follow-up — closes the loop on "your wallet is your homepage"
+## 7. What's gone (good riddance)
 
-## 8. Demo flow once shipped
+- Vite proxy (`/api/swarm` → beeport.ethswarm.org)
+- Wallet signature for upload (`useSignMessage`)
+- Custom Beeport auth headers (`x-uploader-address`, `x-upload-signed-message`, `x-message-content`, `x-file-name`)
+- `swarming.site` and `api.gateway.ethswarm.org/bzz` upload endpoints
+- The whole CORS / "must dev on port 3000 to be in Beeport's allowlist" saga
+  (well, dev still runs on 3000, but only because it's in our local Bee's CORS flag)
 
-1. Connect wallet
-2. Paste batch ID into Stamp settings (one-time)
-3. Fill in profile, attach ENS
-4. Click **Save & upload**
-5. MetaMask popup → sign
-6. ~5 seconds later → success card with `https://api.gateway.ethswarm.org/bzz/<hash>/` link
-7. Click the link → standalone Linktree page renders, served from Swarm
-8. Copy the directory snippet, paste into `directory.ts`, refresh app, `/u/your.eth` redirects to your bzz URL
+## 8. What's still next (graduation paths)
+
+- **ENS contenthash setter**: one-click button that sets the user's ENS name's contenthash to `bzz://<hash>` so their page lives at `<name>.eth.limo`. Needs viem `useWriteContract` against the user's ENS resolver + multicodec encoding for the contenthash bytes.
+- **Programmatic stamp purchase**: replace the "run `swarm-cli stamp create`" instruction with a button calling `bee.buyStorage(size, duration)`. Needs xBZZ in the Bee wallet; user-friendly when funding flow is solid.
+- **Feed-based mutability**: `bee.makeFeedWriter(topic, key).uploadReference(batchId, hash)` so the user gets a stable URL whose content updates without ENS gas. Pairs with ENS contenthash pointing at the feed manifest.
+
+## 9. Demo flow
+
+```
+prereq:   Bee node running with CORS open + at least 1 usable stamp
+
+1.        Visit http://localhost:3000
+2.        Connect wallet
+3.        Stamp dropdown auto-populates from your Bee
+4.        Fill profile + (optional) verify ENS
+5.        Click Save & upload     →  bee.uploadFiles(...)
+6.        ~5s later                →  hash + public-gateway URL appear
+7.        Click /u/<address>       →  SPA redirects to public bzz URL
+8.        Set ENS contenthash      →  page lives at <name>.eth.limo
+```
+
+No popups. No proxy. No third-party gateway dependency for the write path.
